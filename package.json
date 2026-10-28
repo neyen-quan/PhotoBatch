@@ -1,7 +1,7 @@
 {
   "name": "photobatch",
   "productName": "PhotoBatch",
-  "version": "1.2.11",
+  "version": "1.2.12",
   "description": "Organizador local de tandas de imágenes",
   "main": "app/main.js",
   "type": "commonjs",

@@ -21,3 +21,7 @@ La limpieza de metadatos no garantiza borrar marcas integradas en imagen, audio 
 ## Versión 1.2.11
 
 Actualización de prueba del canal GitHub desde 1.2.10. No cambia el procesamiento de fotos o videos.
+
+## Versión 1.2.12
+
+Verificación de publicación automática desde `main` y actualización online desde 1.2.11.
