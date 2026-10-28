@@ -10,8 +10,10 @@ def produce(previous, current, target):
     b=json.loads((current/'package.json').read_text(encoding='utf8'))['version']
     if tuple(map(int,b.split('.'))) <= tuple(map(int,a.split('.'))): raise ValueError('La nueva versión debe ser posterior')
     choices=[current/'package.json'] + list((current/'app').iterdir())
-    before=json.loads((previous/'package.json').read_text(encoding='utf8'))['dependencies']
-    after=json.loads((current/'package.json').read_text(encoding='utf8'))['dependencies']
+    old_package=json.loads((previous/'package.json').read_text(encoding='utf8'))
+    new_package=json.loads((current/'package.json').read_text(encoding='utf8'))
+    before={**old_package.get('dependencies',{}),**old_package.get('optionalDependencies',{})}
+    after={**new_package.get('dependencies',{}),**new_package.get('optionalDependencies',{})}
     runtime=current/'dist'/f'PhotoBatch-{b}-Windows'/'resources'/'app'
     for dependency, directory in [('fflate','node_modules/fflate'),('exiftool-vendored.pl','vendor/exiftool')]:
         if before.get(dependency)!=after.get(dependency):
