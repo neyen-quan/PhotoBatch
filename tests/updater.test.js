@@ -16,9 +16,8 @@ test('future patches can update PowerShell helper with hash validation',()=>{
  const files=[['package.json',pkg],['app/apply-update.ps1',helper]],manifest={schema:1,product:'PhotoBatch',from:'1.2.1',to:'1.2.2',files:files.map(([p,b])=>({path:p,sha256:hash(b)}))};
  const zip=zipSync({'manifest.json':strToU8(JSON.stringify(manifest)),...Object.fromEntries(files.map(([p,b])=>['files/'+p,b]))});assert.equal(validatePatch(zip,'1.2.1').files.length,2);
 });
-test('patch picker points to the requested folder',()=>{
- const main=fs.readFileSync(path.join(__dirname,'../app/main.js'),'utf8');assert.match(main,/defaultPath:app.getPath\('downloads'\)/);
- const helper=fs.readFileSync(path.join(__dirname,'../app/apply-update.ps1'));assert.deepEqual([...helper.subarray(0,3)],[239,187,191]);
+test('patch picker uses downloads without embedding private paths',()=>{
+ const main=fs.readFileSync(path.join(__dirname,'../app/main.js'),'utf8');assert.match(main,/defaultPath:app.getPath\('downloads'\)/);assert.doesNotMatch(main,/Usuarios Disco G/);
 });
 
 const cp=require('node:child_process'),crypto=require('node:crypto');

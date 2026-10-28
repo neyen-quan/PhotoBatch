@@ -4,8 +4,10 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),cryp
 const {BatchService}=require('./service'),{readMetadata}=require('./metadata'),{startUpdate}=require('./updater');
 const {CopyService}=require('./copy');
 const {CopyFeedback}=require('./copy-feedback');
+const channel=require('./update-channel');
 const {VideoService}=require('./video');
 let copyService;
+
 app.setName('PhotoBatch');app.commandLine.appendSwitch('lang','es-AR');
 app.setPath('userData',process.env.PHOTOBATCH_TEST_ROOT?path.join(process.env.PHOTOBATCH_TEST_ROOT,'userdata'):path.join(app.getPath('appData'),'PhotoBatch'));
 protocol.registerSchemesAsPrivileged([{scheme:'photobatch',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
@@ -35,6 +37,10 @@ app.whenReady().then(async()=>{
  handle('importBytes',async payload=>{if(!payload||(!ArrayBuffer.isView(payload.bytes)&&!(payload.bytes instanceof ArrayBuffer)))throw Error('No se recibió un archivo de imagen.');const b=Buffer.from(payload.bytes);if(b.length>100*1024*1024)throw Error('La imagen supera los 100 MiB.');const name=path.basename(String(payload.name||'imagen.png')),ext=path.extname(name).toLowerCase();if(!['.png','.jpg','.jpeg','.webp'].includes(ext))throw Error('Formato no compatible.');const f=path.join(tempRoot,crypto.randomUUID()+ext);fs.writeFileSync(f,b,{flag:'wx'});try{return await importPath(f,name);}catch(e){try{fs.unlinkSync(f);}catch{}throw e;}});
  handle('forget',ids=>{copyService.forget(ids);return service.forget(ids);});handle('preview',(c,items)=>service.preview(c,items));handle('export',(token,name)=>service.export(token,name));handle('history',()=>service.history.summary());
  handle('update',async()=>{if(service.busy||copyService.busy||videoService.busy)throw Error('Esperá a que termine la operación.');const r=await dialog.showOpenDialog(win,{title:'Seleccionar parche local de PhotoBatch',defaultPath:app.getPath('downloads'),properties:['openFile'],filters:[{name:'Parche PhotoBatch',extensions:['zip']}]});if(r.canceled)return {canceled:true};const detail=await startUpdate({patchPath:r.filePaths[0],appRoot:path.resolve(__dirname,'..'),version:app.getVersion(),userData:app.getPath('userData'),exe:process.execPath,showConfirmation:async summary=>(await dialog.showMessageBox(win,{type:'question',buttons:['Cancelar','Instalar y reiniciar'],defaultId:0,cancelId:0,title:'Confirmar parche',message:`Actualizar PhotoBatch ${summary.from} → ${summary.to}`,detail:`${summary.files} archivos modificados. Se realizará un respaldo local antes de instalar. El programa se cerrará durante la actualización.`})).response===1});if(detail?.started)setImmediate(()=>app.quit());return detail;});
+ handle('getUpdateChannel',()=>channel.getChannel(app.getPath('userData')));
+ handle('setUpdateChannel',url=>channel.setChannel(app.getPath('userData'),url));
+ handle('checkUpdate',()=>channel.check(app.getPath('userData'),app.getVersion()));
+ handle('installOnlineUpdate',async()=>{if(service.busy||copyService.busy||videoService.busy)throw Error('Esperá a que termine la operación.');const info=await channel.check(app.getPath('userData'),app.getVersion());if(!info.patch)throw Error('No hay un parche compatible para esta versión.');const file=await channel.downloadPatch(info,app.getPath('userData'));try{const detail=await startUpdate({patchPath:file,appRoot:path.resolve(__dirname,'..'),version:app.getVersion(),userData:app.getPath('userData'),exe:process.execPath,showConfirmation:async summary=>(await dialog.showMessageBox(win,{type:'question',buttons:['Cancelar','Instalar y reiniciar'],defaultId:0,cancelId:0,title:'Confirmar actualización',message:`PhotoBatch ${summary.from} → ${summary.to}`,detail:`Parche de GitHub verificado (${summary.files} archivos). Se guardará un respaldo antes de instalar.`})).response===1});if(detail?.started)setImmediate(()=>app.quit());return detail;}finally{fs.rmSync(file,{force:true});}});
  handle('createCopy',async entries=>{
   const ids=Array.isArray(entries)?entries.map(x=>x?.id):null;
   if(copyService.busy)throw Error('Ya se está creando un copy.');

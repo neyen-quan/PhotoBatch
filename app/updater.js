@@ -2,19 +2,20 @@
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),cp=require('node:child_process');
 
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+function allowedPath(rel){return !rel.split('/').some(p=>p==='.'||p==='..')&&(/^app\/[a-zA-Z0-9_.-]+\.(js|css|html|png|ico|ps1)$/.test(rel)||/^(node_modules\/fflate|vendor\/exiftool)\/(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+$/.test(rel));}
 function validatePatch(buf,from){
  const {unzipSync}=require('fflate');
- if(buf.length>30*1024*1024)throw Error('Parche demasiado grande (máximo 30 MiB).');
+ if(buf.length>180*1024*1024)throw Error('Parche demasiado grande (máximo 180 MiB).');
  const zip=unzipSync(new Uint8Array(buf)),raw=zip['manifest.json'];if(!raw)throw Error('No contiene manifest.json.');
  const manifest=JSON.parse(Buffer.from(raw).toString('utf8'));
- if(manifest.schema!==1||manifest.product!=='PhotoBatch'||manifest.from!==from||!/^\d+\.\d+\.\d+$/.test(manifest.to)||!Array.isArray(manifest.files)||!manifest.files.length||manifest.files.length>50)throw Error('Parche inválido o para otra versión de PhotoBatch.');
+ if(manifest.schema!==1||manifest.product!=='PhotoBatch'||manifest.from!==from||!/^\d+\.\d+\.\d+$/.test(manifest.to)||!Array.isArray(manifest.files)||!manifest.files.length||manifest.files.length>500)throw Error('Parche inválido o para otra versión de PhotoBatch.');
  const ver=v=>v.split('.').map(Number);const a=ver(from),b=ver(manifest.to);if(!(b[0]>a[0]||b[0]===a[0]&&b[1]>a[1]||b[0]===a[0]&&b[1]===a[1]&&b[2]>a[2]))throw Error('El parche debe instalar una versión posterior.');
  const files=[],seen=new Set();
  for(const f of manifest.files){
   const rel=f.path;
-  if(typeof rel!=='string'||!/^app\/[a-zA-Z0-9_.-]+\.(js|css|html|png|ico|ps1)$/.test(rel)&&rel!=='package.json')throw Error('Ruta prohibida en el parche.');
+  if(typeof rel!=='string'||!allowedPath(rel)&&rel!=='package.json')throw Error('Ruta prohibida en el parche.');
   if(seen.has(rel)||!(/^[a-f0-9]{64}$/.test(f.sha256)))throw Error('Manifest inválido.');seen.add(rel);
-  const bytes=zip['files/'+rel];if(!bytes||bytes.length>3*1024*1024||sha(bytes)!==f.sha256)throw Error('Firma de integridad incorrecta: '+rel);
+  const bytes=zip['files/'+rel];if(!bytes||bytes.length>60*1024*1024||sha(bytes)!==f.sha256)throw Error('Firma de integridad incorrecta: '+rel);
   files.push({path:rel,bytes:Buffer.from(bytes),sha256:f.sha256});
  }
  if(!seen.has('package.json'))throw Error('Falta actualizar la versión del programa (package.json).');

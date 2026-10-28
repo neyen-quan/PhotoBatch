@@ -4,6 +4,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 const alive=pid=>{try{process.kill(pid,0);return true;}catch(e){if(e.code==='ESRCH')return false;throw e;}};
+function allowedPath(rel){return !rel.split('/').some(p=>p==='.'||p==='..')&&(/^app\/[a-zA-Z0-9_.-]+\.(js|css|html|png|ico|ps1)$/.test(rel)||/^(node_modules\/fflate|vendor\/exiftool)\/(?:[a-zA-Z0-9_.-]+\/)*[a-zA-Z0-9_.-]+$/.test(rel));}
 function validate(job){
  const {staged,appRoot,from,to}=job;
  const manifest=JSON.parse(fs.readFileSync(path.join(staged,'manifest.json'),'utf8'));
@@ -11,13 +12,13 @@ function validate(job){
  if(manifest.schema!==1||manifest.product!=='PhotoBatch'||manifest.from!==from||manifest.to!==to||pkg.name!=='photobatch'||pkg.version!==from)throw Error('Version o producto incorrectos.');
  const ver=v=>/^\d+\.\d+\.\d+$/.test(v)&&v.split('.').map(Number);
  const a=ver(from),b=ver(to);if(!a||!b||!(b[0]>a[0]||b[0]===a[0]&&b[1]>a[1]||b[0]===a[0]&&b[1]===a[1]&&b[2]>a[2]))throw Error('La version debe aumentar.');
- if(!Array.isArray(manifest.files)||!manifest.files.length||manifest.files.length>50)throw Error('Lista de archivos invalida.');
+ if(!Array.isArray(manifest.files)||!manifest.files.length||manifest.files.length>500)throw Error('Lista de archivos invalida.');
  const seen=new Set();
  for(const f of manifest.files){
-  if(typeof f.path!=='string'||(f.path!=='package.json'&&!/^app\/[a-zA-Z0-9_.-]+\.(js|css|html|png|ico|ps1)$/.test(f.path))||seen.has(f.path))throw Error('Ruta de archivo invalida.');
+  if(typeof f.path!=='string'||(f.path!=='package.json'&&!allowedPath(f.path))||seen.has(f.path))throw Error('Ruta de archivo invalida.');
   seen.add(f.path);
   const data=fs.readFileSync(path.join(staged,'files',f.path));
-  if(data.length>3*1024*1024||!(/^[a-f0-9]{64}$/.test(f.sha256))||hash(data)!==f.sha256)throw Error('Integridad incorrecta: '+f.path);
+  if(data.length>60*1024*1024||!(/^[a-f0-9]{64}$/.test(f.sha256))||hash(data)!==f.sha256)throw Error('Integridad incorrecta: '+f.path);
  }
  if(!seen.has('package.json'))throw Error('Falta package.json.');
  const next=JSON.parse(fs.readFileSync(path.join(staged,'files/package.json'),'utf8'));
@@ -45,6 +46,13 @@ function apply(job,{copy=fs.copyFileSync}={}){
   }catch(e){failures.push(f.path+': '+e.message);}
   throw Error(error.message+(failures.length?' Error al restaurar: '+failures.join('; '):' Se restauro la version anterior.'));
  }
+ return files;
+}
+function restore(job,files){
+ for(const f of files.slice().reverse()){
+  const target=path.join(job.appRoot,f.path),old=path.join(job.staged,'respaldo',f.path);
+  if(fs.existsSync(old))fs.copyFileSync(old,target);else fs.rmSync(target,{force:true});
+ }
 }
 function restartEnvironment(){const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;delete env.ELECTRON_NO_ASAR;return env;}
 async function restart(exe){
@@ -53,7 +61,7 @@ async function restart(exe){
 }
 async function run(job){
  const log=message=>fs.appendFileSync(path.join(job.staged,'actualizacion.log'),`${new Date().toISOString()} ${message}\n`);
- let parentExited=false;
+ let parentExited=false,installedFiles=null;
  try{
   log('Worker Node v2 iniciado; pid '+process.pid);
   if(!Number.isInteger(job.pid)||job.pid<=0||job.pid===process.pid)throw Error('PID padre invalido.');
@@ -64,12 +72,15 @@ async function run(job){
   while(alive(job.pid)){if(Date.now()>deadline)throw Error('PhotoBatch sigue abierto; no se modificaron archivos.');await delay(100);}
   parentExited=true;
   if(job.probe){fs.writeFileSync(path.join(job.staged,'probe-ok'),'OK');log('Prueba completa: arranque, confirmacion y salida del padre.');return;}
-  apply(job);log('Actualizacion completada: '+job.from+' -> '+job.to);
+  installedFiles=apply(job);log('Actualizacion completada: '+job.from+' -> '+job.to);
  }catch(e){log('ERROR: '+e.stack);process.exitCode=1;}
- if(parentExited&&!job.probe)try{await restart(job.exe);log('Reapertura solicitada.');}catch(e){log('ERROR al reabrir: '+e.message);process.exitCode=1;}
+ if(parentExited&&!job.probe)try{await restart(job.exe);log('Reapertura solicitada.');}catch(e){
+  log('ERROR al reabrir: '+e.message);process.exitCode=1;
+  if(installedFiles)try{restore(job,installedFiles);log('Version anterior restaurada.');await restart(job.exe);}catch(recovery){log('ERROR al restaurar: '+recovery.message);}
+ }
 }
 if(require.main===module){
  try{const job=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));run(job).catch(e=>{console.error(e);process.exitCode=1;});}
  catch(e){console.error(e);process.exitCode=1;}
 }
-module.exports={validate,apply,run,restartEnvironment};
+module.exports={validate,apply,restore,run,restartEnvironment};
