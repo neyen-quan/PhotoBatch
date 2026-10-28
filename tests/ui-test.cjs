@@ -1,0 +1,21 @@
+const {_electron:electron}=require('playwright'),path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
+(async()=>{
+ const root=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'photobatch-ui-'));
+ const options={executablePath:path.resolve('build/electron-linux/electron'),args:['--no-sandbox',path.resolve('.')],env:{...process.env,DISPLAY:'127.0.0.1:105',PHOTOBATCH_TEST_ROOT:root}};
+ const app=await electron.launch(options),page=await app.firstWindow();page.on('pageerror',e=>console.error('PAGEERROR',e.message));await page.waitForSelector('.slot');assert.equal(await page.locator('.slot').count(),10);
+ await page.screenshot({path:'tests/empty-ui.png'});
+ const raw=[...fs.readFileSync(path.resolve('tests/fixtures/alpha.webp'))];
+ await page.evaluate(bytes=>{const dt=new DataTransfer();dt.items.add(new File([new Uint8Array(bytes)],'arrastrada.webp',{type:'image/webp'}));document.querySelector('.slot').dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:dt}));},raw);
+ await page.waitForFunction(()=>document.querySelectorAll('.filled').length===1);assert.equal(await page.locator('.photo-name').textContent(),'arrastrada.webp');
+ await page.locator('#clearButton').click();await page.waitForFunction(()=>document.querySelectorAll('.filled').length===0);
+ for(const name of ['rgb.png','normal.jpg','alpha.webp'])await page.evaluate(async file=>{const source=await window.photoBatch.importPath(file);slots[slots.indexOf(null)]={...source,camera:'back'};render();},path.resolve('tests/fixtures',name));
+ await page.locator('.slot.filled').first().dragTo(page.locator('.slot.filled').nth(2));assert.equal(await page.locator('.photo-name').first().textContent(),'alpha.webp');
+ await page.locator('.camera').first().click();assert.match(await page.locator('.camera').first().textContent(),/Frontal/);
+ await page.locator('#start').fill('4385');await page.locator('#size').fill('100');await page.locator('#date').fill('2026-10-19');await page.locator('#previewButton').click();await page.waitForFunction(()=>!document.getElementById('exportButton').disabled);
+ await page.screenshot({path:'tests/preview-ui.png'});const box=await page.locator('#exportButton').boundingBox();assert.ok(box.y+box.height<=960);
+ for(const text of await page.locator('.photo-name').allTextContents())assert.match(text,/^IMG_\d{4}\./);
+ await page.locator('#exportButton').click();await page.waitForSelector('#result:not([hidden])',{timeout:120000});assert.equal(await page.locator('#nextNumber').textContent(),'4485');assert.equal(await page.locator('#lastRange').textContent(),'4385 — 4484');
+ await page.locator('#resultReport').click();assert.equal(await page.locator('.report-card').count(),3);await page.locator('#closeModal').click();await app.close();
+ const app2=await electron.launch(options),page2=await app2.firstWindow();await page2.waitForSelector('.slot');assert.equal(await page2.locator('#start').inputValue(),'4485');assert.equal(await page2.locator('#lastDate').textContent(),'19/10/2026');await app2.close();
+ console.log('UI PASS: 10 slots, drop, import, reorder, camera, preview, ZIP, report and restart.');
+})().catch(e=>{console.error(e);process.exit(1);});

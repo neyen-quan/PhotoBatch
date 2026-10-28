@@ -1,0 +1,11 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{unzipSync}=require('fflate');
+const {VideoService,zipName,outputName,createSequence}=require('../app/video');
+test('video ZIP keeps order and Unicode names; a missing later input publishes nothing',async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pb-videos-test-')),downloads=path.join(dir,'Downloads'),first=path.join(dir,'Uno.mp4'),second=path.join(dir,'Baño gym.mp4');
+ try{fs.writeFileSync(first,Buffer.alloc(120,1));fs.writeFileSync(second,Buffer.alloc(120,2));const service=new VideoService(downloads);service.cleanOne=async(source,target)=>{fs.copyFileSync(source,target);return {size:120,removed:1};};let added=await service.add([first,second]);assert.equal(added.accepted.length,2);assert.equal(added.skipped,0);assert.equal(added.sequence.length,10);assert.ok(added.sequence.every((n,i)=>i===0||n-added.sequence[i-1]>=100));
+ const expected=added.sequence.slice(0,2).map(n=>`clip_${n}.mp4`);let result=await service.clean(added.accepted.map(x=>x.id),'Mis reels');assert.equal(result.zipName,'Mis reels.zip');let zip=unzipSync(fs.readFileSync(path.join(downloads,result.zipName)));assert.deepEqual(Object.keys(zip),expected);assert.equal(zip[expected[1]].length,120);assert.equal(result.items[1].originalName,'Baño gym.mp4');assert.equal(result.items[1].name,expected[1]);assert.notDeepEqual(result.sequence,added.sequence);
+ const next=result.sequence.slice(0,2).map(n=>`clip_${n}.mp4`),reordered=await service.clean([added.accepted[1].id,added.accepted[0].id],'Invertidos');assert.deepEqual(reordered.items.map(x=>x.originalName),['Baño gym.mp4','Uno.mp4']);assert.deepEqual(reordered.items.map(x=>x.name),next);assert.equal(outputName(483721,'Reel.MOV'),'clip_483721.mov');assert.equal(createSequence().length,10);
+ fs.unlinkSync(second);await assert.rejects(service.clean(added.accepted.map(x=>x.id),'Fallido'),/Baño gym.mp4/);assert.deepEqual(fs.readdirSync(downloads),['Invertidos.zip','Mis reels.zip']);assert.equal(zipName('../mal: nombre.zip'),'.._mal_ nombre.zip');
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});

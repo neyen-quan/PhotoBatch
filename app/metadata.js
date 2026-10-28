@@ -1,0 +1,23 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),{execFile}=require('node:child_process'),{promisify}=require('node:util');const exec=promisify(execFile);
+const {inspect,verifyImage}=require('./image-container'),{hash}=require('./util');
+const PROFILES={back:{lens:'iPhone 15 Pro back triple camera 6.86mm f/1.78',focal:6.86,aperture:1.78,equivalent:24},front:{lens:'iPhone 15 Pro front TrueDepth camera 2.69mm f/1.9',focal:2.69,aperture:1.9,equivalent:30}};
+async function run(args){const win=process.platform==='win32',file=win?path.join(__dirname,'..','vendor','exiftool','bin','exiftool.exe'):'perl',prefix=win?[]:[path.join(__dirname,'..','node_modules','exiftool-vendored.pl','bin','exiftool')];try{return await exec(file,[...prefix,'-charset','filename=UTF8',...args],{windowsHide:true,timeout:90000,maxBuffer:8*1024*1024,encoding:'utf8'});}catch(e){throw Error('No se pudo procesar la metadata: '+(e.stderr||e.message).slice(0,900));}}
+async function readMetadata(file){return JSON.parse((await run(['-json','-G1','-a','-s','-n','-struct',file])).stdout)[0];}
+const WRITTEN=new Set(['Make','Model','LensMake','LensModel','FNumber','ApertureValue','FocalLength','FocalLengthIn35mmFormat','ExifVersion','FlashpixVersion','ExifImageWidth','ExifImageHeight','ModifyDate','DateTimeOriginal','CreateDate','OffsetTime','OffsetTimeOriginal','OffsetTimeDigitized','Orientation','XResolution','YResolution','ResolutionUnit','ColorSpace','InteropIndex','InteropVersion','YCbCrPositioning','ComponentsConfiguration']);
+function assertClean(meta){for(const k of Object.keys(meta)){const [group,tag]=k.split(':');if(['GPS','IPTC','Photoshop','Apple','MakerNotes'].includes(group)||group.startsWith('XMP'))throw Error('Metadata residual detectada: '+k);if(['IFD0','ExifIFD','InteropIFD','IFD1'].includes(group)&&!WRITTEN.has(tag))throw Error('Campo EXIF inesperado: '+k);if(group==='PNG'&&['Comment','Description','Software','Author','Title','Parameters','Prompt','Workflow','CreationTime','ModifyDate'].includes(tag))throw Error('Texto residual en PNG: '+k);if(k==='ExifTool:Error')throw Error('El archivo exportado no pasó la lectura de metadatos.');}}
+async function transform(input,output,item,sourceHash){
+ const original=await fs.promises.readFile(input);if(sourceHash&&hash(original)!==sourceHash)throw Error('La imagen original cambió desde que la cargaste. Volvé a cargarla.');
+ const before=inspect(original),old=await readMetadata(input),orientation=old['IFD0:Orientation']??1;
+ if(!Number.isInteger(orientation)||orientation<1||orientation>8)throw Error('Orientación original inválida.');
+ await fs.promises.writeFile(output,before.clean,{flag:'wx'});
+ const p=PROFILES[item.camera],date=item.date.replaceAll('-',':')+' '+item.time;
+ const args=['-overwrite_original','-P','-IFD0:Make=Apple','-IFD0:Model=iPhone 15 Pro',`-IFD0:Orientation#=${orientation}`,'-ExifIFD:LensMake=Apple',`-ExifIFD:LensModel=${p.lens}`,`-ExifIFD:FNumber=${p.aperture}`,`-ExifIFD:ApertureValue=${p.aperture}`,`-ExifIFD:FocalLength=${p.focal}`,`-ExifIFD:FocalLengthIn35mmFormat=${p.equivalent}`,'-ExifIFD:ExifVersion=0232',`-ExifIFD:ExifImageWidth=${before.width}`,`-ExifIFD:ExifImageHeight=${before.height}`,`-IFD0:ModifyDate=${date}`,`-ExifIFD:DateTimeOriginal=${date}`,`-ExifIFD:CreateDate=${date}`,`-ExifIFD:OffsetTime=${item.offset}`,`-ExifIFD:OffsetTimeOriginal=${item.offset}`,`-ExifIFD:OffsetTimeDigitized=${item.offset}`];
+ const preserve=['IFD0:XResolution','IFD0:YResolution','IFD0:ResolutionUnit','ExifIFD:ColorSpace'];for(const k of preserve)if(typeof old[k]==='number')args.push(`-${k}#=${old[k]}`);
+ const written=await run([...args,output]);if(/Warning|Error/i.test(written.stderr))throw Error('Problema al escribir: '+written.stderr.slice(0,600));
+ const bytes=await fs.promises.readFile(output),verified=verifyImage(original,bytes),meta=await readMetadata(output);assertClean(meta);
+ if(meta['IFD0:Orientation']!==orientation||meta['IFD0:Model']!=='iPhone 15 Pro'||meta['ExifIFD:LensModel']!==p.lens||meta['ExifIFD:DateTimeOriginal']!==date||meta['ExifIFD:OffsetTimeOriginal']!==item.offset)throw Error('No se pudieron verificar cámara, orientación y fecha.');
+ for(const k of preserve)if(typeof old[k]==='number'&&meta[k]!==old[k])throw Error('Cambió información de representación: '+k);
+ return {bytes,report:{name:item.name,camera:item.camera,date:item.date,time:item.time,offset:item.offset,...verified,originalBytes:original.length,exportedBytes:bytes.length,removedBlocks:before.removed,metadata:meta,originalSHA256:hash(original),exportedSHA256:hash(bytes),verified:true}};
+}
+module.exports={transform,readMetadata,PROFILES};

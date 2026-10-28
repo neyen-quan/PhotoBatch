@@ -1,0 +1,15 @@
+'use strict';
+const {randomInt}=require('node:crypto');
+function seconds(s){if(!/^\d{2}:\d{2}(:\d{2})?$/.test(s||''))throw Error('Ingresá una hora válida.');const [h,m,n=0]=s.split(':').map(Number);if(h>23||m>59||n>59)throw Error('Hora fuera de rango.');return h*3600+m*60+n;}
+const hhmmss=s=>[Math.floor(s/3600),Math.floor(s/60)%60,s%60].map(x=>String(x).padStart(2,'0')).join(':');
+function validDate(s){if(!/^\d{4}-\d{2}-\d{2}$/.test(s||''))return false;const d=new Date(s+'T12:00:00Z');return !isNaN(d)&&d.toISOString().slice(0,10)===s&&s>='1980-01-01'&&s<='2099-12-31';}
+function sample(lo,hi,n){if(hi-lo+1<n)throw Error('El rango es demasiado pequeño para las fotos.');const set=new Set();for(let j=hi-n+1;j<=hi;j++){const x=randomInt(lo,j+1);set.add(set.has(x)?j:x);}return [...set].sort((a,b)=>a-b);}
+function offsetFor(date,time,zone){const desired=Date.parse(date+'T'+time+'Z');let candidate=desired;const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});const localMs=t=>{const p=Object.fromEntries(fmt.formatToParts(new Date(t)).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));return Date.UTC(+p.year,+p.month-1,+p.day,+p.hour,+p.minute,+p.second);};for(let i=0;i<4;i++){const delta=desired-localMs(candidate);if(delta===0)break;candidate+=delta;}if(localMs(candidate)!==desired)throw Error('Esa hora no existe en la zona elegida por el cambio de horario.');const min=(desired-candidate)/60000,a=Math.abs(min);return (min>=0?'+':'-')+String(Math.floor(a/60)).padStart(2,'0')+':'+String(a%60).padStart(2,'0');}
+function makePlan(config,items,highWater=-1){
+ const start=Number(config.start),size=Number(config.size),end=start+size-1,n=items.length;
+ if(!Number.isInteger(start)||!Number.isInteger(size)||start<0||size<1||end>999999999)throw Error('Inicio y cantidad deben ser enteros válidos (máximo 999999999).');
+ if(start<=highWater)throw Error(`El nuevo rango debe empezar después de ${highWater}.`);if(n<1||n>10)throw Error('Cargá entre 1 y 10 imágenes.');if(size<n)throw Error('El rango debe alcanzar para todas las fotos.');if(!validDate(config.date))throw Error('Elegí una fecha válida entre 1980 y 2099.');
+ const from=seconds(config.from),to=seconds(config.to);if(to<from)throw Error('La hora final debe ser posterior a la inicial, sin cambiar de día.');if(to-from+1<n)throw Error('El intervalo necesita al menos un segundo por imagen.');try{new Intl.DateTimeFormat('en',{timeZone:config.zone});}catch{throw Error('Zona horaria inválida.');}
+ const numbers=sample(start,end,n),times=sample(from,to,n);return {config:{start,size,end,date:config.date,from:hhmmss(from),to:hhmmss(to),zone:config.zone},items:items.map((item,i)=>{const time=hhmmss(times[i]);return {id:item.id,camera:item.camera==='front'?'front':'back',number:numbers[i],name:`IMG_${String(numbers[i]).padStart(4,'0')}${item.extension}`,date:config.date,time,offset:offsetFor(config.date,time,config.zone)};})};
+}
+module.exports={makePlan,offsetFor,validDate};

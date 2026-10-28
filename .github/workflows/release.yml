@@ -1,0 +1,72 @@
+name: Publicar PhotoBatch
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Empaquetar Windows
+        shell: pwsh
+        run: |
+          node build/download.mjs
+          npm pack exiftool-vendored.exe@13.59.3 --pack-destination build
+          python build/package.py
+      - name: Comprobar aplicación y actualizador
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory vendor -Force | Out-Null
+          Copy-Item -Path "dist/PhotoBatch-$((Get-Content package.json -Raw | ConvertFrom-Json).version)-Windows/resources/app/vendor/exiftool" -Destination vendor/exiftool -Recurse
+          npm test
+      - name: Crear parche y canal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $v=(Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ('v'+$v -ne '${{ github.ref_name }}' -and '${{ github.event_name }}' -eq 'push') { throw 'El tag y package.json no coinciden' }
+          $tag='v'+$v
+          $previous=git tag --list 'v*' --sort=-version:refname | Where-Object { $_ -ne $tag } | Select-Object -First 1
+          $patches=@()
+          if($previous){
+            $old=$previous.TrimStart('v')
+            git worktree add --detach previous $previous
+            if($LASTEXITCODE -ne 0){throw 'No se pudo extraer la versión anterior'}
+            python build/make_patch.py previous . "dist/PhotoBatch-Parche-$old-a-$v.zip"
+            if($LASTEXITCODE -ne 0){throw 'No se pudo crear el parche'}
+            $name="PhotoBatch-Parche-$old-a-$v.zip"
+            $patches+=@{from=$old;url="https://github.com/${{ github.repository }}/releases/download/$tag/$name";sha256=(Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()}
+          }
+          @{product='PhotoBatch';version=$v;patches=$patches}|ConvertTo-Json -Depth 5|Set-Content dist/latest.json -Encoding utf8
+      - name: Publicar release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $v=(Get-Content package.json -Raw | ConvertFrom-Json).version
+          $files=@("dist/PhotoBatch-$v-Windows.zip","dist/latest.json")
+          $files+=@(Get-ChildItem dist/PhotoBatch-Parche-*.zip -ErrorAction SilentlyContinue | ForEach-Object FullName)
+          gh release view "v$v" *> $null
+          if($LASTEXITCODE -eq 0){
+            gh release upload "v$v" $files --clobber
+            if($LASTEXITCODE -ne 0){throw 'Falló la subida de archivos a la release'}
+            gh release edit "v$v" --latest
+          }else{
+            gh release create "v$v" $files --title "PhotoBatch $v" --notes "Instalación nueva: ZIP Windows. Instalación existente: Actualizar en PhotoBatch." --latest
+          }
+          if($LASTEXITCODE -ne 0){throw 'Falló la publicación de la release'}
