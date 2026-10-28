@@ -40,6 +40,10 @@ jobs:
             $package | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
             $lock | ConvertTo-Json -Depth 100 | Set-Content package-lock.json -Encoding utf8
           }
+          $feedback=Get-Content app/copy-feedback.js -Raw
+          if($feedback.Contains("fs.openSync(tmp,'r')")){
+            $feedback.Replace("fs.openSync(tmp,'r')","fs.openSync(tmp,'r+')") | Set-Content app/copy-feedback.js -Encoding utf8
+          }
       - name: Instalar dependencias
         run: npm ci
       - name: Empaquetar Windows

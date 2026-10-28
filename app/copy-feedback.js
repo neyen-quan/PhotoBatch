@@ -39,7 +39,7 @@ class CopyFeedback{
   const tmp=this.file+'.tmp';
   try{
    fs.writeFileSync(tmp,data,{flag:'w'});
-   const fd=fs.openSync(tmp,'r');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+   const fd=fs.openSync(tmp,'r+');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
    // Keep the last valid generation until the new one is safely in place.
    if(fs.existsSync(this.file)){
     try{parse(fs.readFileSync(this.file,'utf8'));fs.copyFileSync(this.file,this.file+'.bak');}catch{}
