@@ -17,3 +17,7 @@ La aplicación consulta `latest.json` de la release más reciente. Cada tag `vX.
 El botón Actualizar permite buscar, cambiar el canal (HTTPS GitHub), descargar y verificar el parche o instalar un ZIP local. Historial, preferencias y configuración del canal se guardan en `%APPDATA%/PhotoBatch`, fuera del repositorio y de los archivos reemplazados. El worker conserva respaldos y revierte cambios si falla la aplicación. La actualización en Windows debe probarse en un equipo real antes de considerarse validada.
 
 La limpieza de metadatos no garantiza borrar marcas integradas en imagen, audio o pistas de video. Los nombres de archivo no certifican procedencia.
+
+## Versión 1.2.11
+
+Actualización de prueba del canal GitHub desde 1.2.10. No cambia el procesamiento de fotos o videos.
