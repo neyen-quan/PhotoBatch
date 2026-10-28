@@ -1,6 +1,7 @@
 name: Publicar PhotoBatch
 on:
   push:
+    branches: [main]
     tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
@@ -10,6 +11,9 @@ on:
         type: string
 permissions:
   contents: write
+concurrency:
+  group: photobatch-release
+  cancel-in-progress: false
 jobs:
   release:
     runs-on: windows-latest
@@ -18,14 +22,32 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.release_tag || github.ref }}
+      - name: Decidir publicación
+        id: plan
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $v=(Get-Content package.json -Raw | ConvertFrom-Json).version
+          if($v -notmatch '^\d+\.\d+\.\d+$'){throw 'Versión inválida en package.json'}
+          if('${{ github.ref_type }}' -eq 'tag' -and '${{ github.ref_name }}' -ne "v$v"){throw 'El tag no coincide con package.json'}
+          if('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.release_tag }}' -ne "v$v"){throw 'El tag indicado no coincide con package.json'}
+          if('${{ github.ref_type }}' -eq 'branch' -and '${{ github.event_name }}' -eq 'push' -and (git tag --list "v$v")){
+            'publish=false' >> $env:GITHUB_OUTPUT
+            Write-Host "v$v ya publicada; no se vuelve a empaquetar."
+          }else{
+            'publish=true' >> $env:GITHUB_OUTPUT
+          }
       - uses: actions/setup-node@v4
+        if: steps.plan.outputs.publish == 'true'
         with:
           node-version: '24'
           cache: npm
       - uses: actions/setup-python@v5
+        if: steps.plan.outputs.publish == 'true'
         with:
           python-version: '3.12'
       - name: Compatibilidad de la versión base
+        if: steps.plan.outputs.publish == 'true'
         shell: pwsh
         run: |
           $package=Get-Content package.json -Raw | ConvertFrom-Json -AsHashtable
@@ -45,25 +67,29 @@ jobs:
             $feedback.Replace("fs.openSync(tmp,'r')","fs.openSync(tmp,'r+')") | Set-Content app/copy-feedback.js -Encoding utf8
           }
       - name: Instalar dependencias
+        if: steps.plan.outputs.publish == 'true'
         run: npm ci
       - name: Empaquetar Windows
+        if: steps.plan.outputs.publish == 'true'
         shell: pwsh
         run: |
           node build/download.mjs
           npm pack exiftool-vendored.exe@13.59.3 --pack-destination build
           python build/package.py
       - name: Comprobar aplicación y actualizador
+        if: steps.plan.outputs.publish == 'true'
         shell: pwsh
         run: |
           New-Item -ItemType Directory vendor -Force | Out-Null
           Copy-Item -Path "dist/PhotoBatch-$((Get-Content package.json -Raw | ConvertFrom-Json).version)-Windows/resources/app/vendor/exiftool" -Destination vendor/exiftool -Recurse
           npm test
       - name: Crear parche y canal
+        if: steps.plan.outputs.publish == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
           $v=(Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ('v'+$v -ne '${{ github.ref_name }}' -and '${{ github.event_name }}' -eq 'push') { throw 'El tag y package.json no coinciden' }
+          if ('${{ github.ref_type }}' -eq 'tag' -and 'v'+$v -ne '${{ github.ref_name }}') { throw 'El tag y package.json no coinciden' }
           if ('${{ github.event_name }}' -eq 'workflow_dispatch' -and 'v'+$v -ne '${{ inputs.release_tag }}') { throw 'El tag indicado no coincide con package.json' }
           $tag='v'+$v
           $previous=git tag --list 'v*' --sort=-version:refname | Where-Object { $_ -ne $tag } | Select-Object -First 1
@@ -79,6 +105,7 @@ jobs:
           }
           @{product='PhotoBatch';version=$v;patches=$patches}|ConvertTo-Json -Depth 5|Set-Content dist/latest.json -Encoding utf8
       - name: Publicar release
+        if: steps.plan.outputs.publish == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,6 +120,6 @@ jobs:
             if($LASTEXITCODE -ne 0){throw 'Falló la subida de archivos a la release'}
             gh release edit "v$v" --latest
           }else{
-            gh release create "v$v" $files --title "PhotoBatch $v" --notes "Instalación nueva: ZIP Windows. Instalación existente: Actualizar en PhotoBatch." --latest
+            gh release create "v$v" $files --target '${{ github.sha }}' --title "PhotoBatch $v" --notes "Instalación nueva: ZIP Windows. Instalación existente: Actualizar en PhotoBatch." --latest
           }
           if($LASTEXITCODE -ne 0){throw 'Falló la publicación de la release'}
