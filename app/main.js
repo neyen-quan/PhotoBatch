@@ -25,7 +25,7 @@ app.whenReady().then(async()=>{
  session.defaultSession.setPermissionRequestHandler((_w,_p,cb)=>cb(false));session.defaultSession.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*','ws://*/*','wss://*/*']},(_d,cb)=>cb({cancel:true}));
  tempRoot=fs.mkdtempSync(path.join(os.tmpdir(),'PhotoBatch-'));let startupError=null;
  try{service=new BatchService({stateDir:path.join(app.getPath('userData'),'history'),tempDir:tempRoot,downloads:process.env.PHOTOBATCH_TEST_ROOT?path.join(process.env.PHOTOBATCH_TEST_ROOT,'Downloads'):app.getPath('downloads'),onProgress:p=>win?.webContents.send('progress',p)});service.history.summary();}catch(e){startupError=e.message;}
- videoService=new VideoService(process.env.PHOTOBATCH_TEST_ROOT?path.join(process.env.PHOTOBATCH_TEST_ROOT,'Downloads'):app.getPath('downloads'));
+ videoService=new VideoService(process.env.PHOTOBATCH_TEST_ROOT?path.join(process.env.PHOTOBATCH_TEST_ROOT,'Downloads'):app.getPath('downloads'),app.getPath('userData'));
  handle('init',()=>({version:app.getVersion(),error:startupError,copyError:copyFeedbackError,history:startupError?null:service.history.summary()}));
  handle('pick',async()=>{const r=await dialog.showOpenDialog(win,{title:'Agregar imágenes originales',properties:['openFile','multiSelections'],filters:[{name:'Imágenes',extensions:['png','jpg','jpeg','webp']}]});return r.canceled?[]:r.filePaths.slice(0,10);});
  async function videoThumb(file){if(process.platform!=='win32')return null;const image=await nativeImage.createThumbnailFromPath(file,{width:480,height:360});return image.isEmpty()?null:image.resize({width:280,quality:'good'}).toDataURL();}

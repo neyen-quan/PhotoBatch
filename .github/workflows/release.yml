@@ -92,14 +92,16 @@ jobs:
           if ('${{ github.ref_type }}' -eq 'tag' -and 'v'+$v -ne '${{ github.ref_name }}') { throw 'El tag y package.json no coinciden' }
           if ('${{ github.event_name }}' -eq 'workflow_dispatch' -and 'v'+$v -ne '${{ inputs.release_tag }}') { throw 'El tag indicado no coincide con package.json' }
           $tag='v'+$v
-          $previous=git tag --list 'v*' --sort=-version:refname | Where-Object { $_ -ne $tag } | Select-Object -First 1
+          $previous=git tag --list 'v*' --sort=-version:refname | Where-Object { $_ -ne $tag } | Select-Object -First 2
           $patches=@()
-          if($previous){
-            $old=$previous.TrimStart('v')
-            git worktree add --detach previous $previous
+          foreach($base in $previous){
+            $old=$base.TrimStart('v')
+            git worktree add --detach previous $base
             if($LASTEXITCODE -ne 0){throw 'No se pudo extraer la versión anterior'}
             python build/make_patch.py previous . "dist/PhotoBatch-Parche-$old-a-$v.zip"
             if($LASTEXITCODE -ne 0){throw 'No se pudo crear el parche'}
+            git worktree remove previous
+            if($LASTEXITCODE -ne 0){throw 'No se pudo quitar el árbol de la versión anterior'}
             $name="PhotoBatch-Parche-$old-a-$v.zip"
             $patches+=@{from=$old;url="https://github.com/${{ github.repository }}/releases/download/$tag/$name";sha256=(Get-FileHash "dist/$name" -Algorithm SHA256).Hash.ToLowerInvariant()}
           }
