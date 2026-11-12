@@ -14,3 +14,32 @@ test('video ZIPs keep order and persist ascending names across restart; a missin
 
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('real video dates match selected zone and ZIP date, with chronological order and custom names',async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pb-video-dates-')),downloads=path.join(dir,'Downloads');
+ const {execFileSync}=require('node:child_process');
+ const read=file=>JSON.parse(execFileSync(process.platform==='win32'?path.join(__dirname,'../vendor/exiftool/bin/exiftool.exe'):'perl',[
+ ...(process.platform==='win32'?[]:[path.join(__dirname,'../node_modules/exiftool-vendored.pl/bin/exiftool')]),'-j','-G1','-a','-s','-n',file],{encoding:'utf8'}))[0];
+ try{
+  const source=path.join(dir,'source.mp4');fs.writeFileSync(source,Buffer.from(fs.readFileSync(path.join(__dirname,'fixtures/video.mp4.base64'),'utf8'),'base64'));
+  const original=fs.readFileSync(source),service=new VideoService(downloads,path.join(dir,'state'));
+  const added=await service.add([source,source]),ids=added.accepted.map(x=>x.id),config={date:'2026-11-12',from:'16:31:00',to:'16:31:01',zone:'America/Los_Angeles'};
+  const result=await service.clean(ids,'',null,config);
+  assert.equal(result.zipName,'Reel (12-11-2026).zip');assert.deepEqual(result.items.map(x=>x.time),['16:31:00','16:31:01']);
+  const contents=unzipSync(fs.readFileSync(path.join(downloads,result.zipName)));
+  for(const [i,item] of result.items.entries()){
+   const out=path.join(dir,'out'+i+'.mp4');fs.writeFileSync(out,contents[item.name]);const meta=read(out);
+   assert.equal(meta['QuickTime:CreateDate'],`2026:11:13 00:31:0${i}`);
+   assert.equal(meta['QuickTime:ModifyDate'],`2026:11:13 00:31:0${i}`);
+   assert.equal(meta['Keys:CreationDate'],`2026:11:12 16:31:0${i}-08:00`);
+   assert.equal(JSON.stringify(meta).includes('remove-me'),false);
+   for(const [key,value] of Object.entries(meta))if(/:(Track|Media)(Create|Modify)Date$/.test(key))assert.equal(value,`2026:11:13 00:31:0${i}`);
+  }
+  assert.deepEqual(fs.readFileSync(source),original);
+  const summer=await service.clean([ids[1]],'Mi reel',null,{...config,date:'2026-07-12',from:'16:31:00',to:'16:31:00'});
+  assert.equal(summer.zipName,'Mi reel.zip');assert.equal(summer.items[0].offset,'-07:00');
+  const duplicate=await service.clean([ids[0]],'',null,config);assert.equal(duplicate.zipName,'Reel (12-11-2026)-2.zip');
+  const before=fs.readdirSync(downloads);await assert.rejects(service.clean(ids,'No guardar',null,{...config,to:'16:31:00'}),/segundo por archivo/);
+  await assert.rejects(service.clean(ids,'No guardar',null,{...config,date:'2026-02-30'}),/fecha válida/);assert.deepEqual(fs.readdirSync(downloads),before);
+ }finally{fs.rmSync(dir,{recursive:true,force:true,maxRetries:10,retryDelay:50});}
+});
