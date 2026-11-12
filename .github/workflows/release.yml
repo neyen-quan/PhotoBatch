@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Tag existente que se debe compilar (por ejemplo v1.2.9)'
-        required: true
+        description: 'Tag existente que se debe compilar (vacío: publicar el commit seleccionado)'
+        required: false
         type: string
 permissions:
   contents: write
@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ inputs.release_tag || github.sha }}
       - name: Decidir publicación
         id: plan
         shell: pwsh
@@ -30,7 +30,7 @@ jobs:
           $v=(Get-Content package.json -Raw | ConvertFrom-Json).version
           if($v -notmatch '^\d+\.\d+\.\d+$'){throw 'Versión inválida en package.json'}
           if('${{ github.ref_type }}' -eq 'tag' -and '${{ github.ref_name }}' -ne "v$v"){throw 'El tag no coincide con package.json'}
-          if('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.release_tag }}' -ne "v$v"){throw 'El tag indicado no coincide con package.json'}
+          if('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.release_tag }}' -ne '' -and '${{ inputs.release_tag }}' -ne "v$v"){throw 'El tag indicado no coincide con package.json'}
           if('${{ github.ref_type }}' -eq 'branch' -and '${{ github.event_name }}' -eq 'push' -and (git tag --list "v$v")){
             'publish=false' >> $env:GITHUB_OUTPUT
             Write-Host "v$v ya publicada; no se vuelve a empaquetar."
@@ -90,7 +90,7 @@ jobs:
           $ErrorActionPreference='Stop'
           $v=(Get-Content package.json -Raw | ConvertFrom-Json).version
           if ('${{ github.ref_type }}' -eq 'tag' -and 'v'+$v -ne '${{ github.ref_name }}') { throw 'El tag y package.json no coinciden' }
-          if ('${{ github.event_name }}' -eq 'workflow_dispatch' -and 'v'+$v -ne '${{ inputs.release_tag }}') { throw 'El tag indicado no coincide con package.json' }
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.release_tag }}' -ne '' -and 'v'+$v -ne '${{ inputs.release_tag }}') { throw 'El tag indicado no coincide con package.json' }
           $tag='v'+$v
           $previous=git tag --list 'v*' --sort=-version:refname | Where-Object { $_ -ne $tag } | Select-Object -First 2
           $patches=@()
