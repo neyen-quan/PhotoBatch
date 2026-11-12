@@ -63,7 +63,8 @@ test('real detached worker handshakes, survives parent exit and handles Unicode 
   const proc=cp.spawn(process.execPath,[launcher],{stdio:['ignore','ignore','pipe']});let stderr='';proc.stderr.on('data',b=>stderr+=b);
   const code=await new Promise((r,j)=>{proc.on('error',j);proc.on('exit',r);});assert.equal(code,0,stderr);
   await awaitFile(path.join(f.staged,'probe-ok'));assert.match(fs.readFileSync(path.join(f.staged,'actualizacion.log'),'utf8'),/Prueba completa/);
- }finally{fs.rmSync(f.dir,{recursive:true,force:true});}
+ // Windows can briefly keep the detached worker's files open after the probe.
+ }finally{fs.rmSync(f.dir,{recursive:true,force:true,maxRetries:10,retryDelay:50});}
 });
 test('real worker applies only after parent closes and requests a restart',async()=>{
  const f=fixture();try{
