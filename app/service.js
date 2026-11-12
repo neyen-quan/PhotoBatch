@@ -6,10 +6,11 @@ class BatchService{
  async importFile(file,displayName){if(this.busy)throw Error('Esperá a que termine la exportación.');const stat=await fs.promises.stat(file);if(!stat.isFile()||stat.size>100*1024*1024)throw Error('Cada imagen debe pesar como máximo 100 MiB.');const b=await fs.promises.readFile(file),info=inspect(b),extension=path.extname(displayName||file),allowed={png:['.png'],jpeg:['.jpg','.jpeg'],webp:['.webp']}[info.format];if(!allowed.includes(extension.toLowerCase()))throw Error('La extensión no coincide con el formato real.');const id=crypto.randomUUID(),source={id,path:file,name:path.basename(displayName||file),extension,size:b.length,width:info.width,height:info.height,hash:hash(b),format:info.format};this.sources.set(id,source);return {...source,path:undefined,hash:undefined};}
  forget(ids){if(this.busy)return;for(const id of ids){const s=this.sources.get(id);if(s&&path.dirname(s.path)===this.tempDir)try{fs.unlinkSync(s.path);}catch{}this.sources.delete(id);}this.plan=null;}
  preview(config,items){if(this.busy)throw Error('Hay una exportación en curso.');if(new Set(items.map(x=>x.id)).size!==items.length)throw Error('Una imagen está duplicada en el lote.');let total=0;const entries=items.map(x=>{const s=this.sources.get(x.id);if(!s)throw Error('Volvé a cargar las imágenes.');total+=s.size;return {...s,camera:x.camera};});if(total>500*1024*1024)throw Error('El lote supera los 500 MiB.');this.plan=makePlan(config,entries,this.history.summary().highWater);this.plan.token=crypto.randomUUID();return this.plan;}
- async export(token,customName=""){
+ async export(token,customName="",publicationType="Story"){
   if(this.busy)throw Error('Hay una exportación en curso.');if(!this.plan||this.plan.token!==token)throw Error('Generá una vista previa actualizada.');
-  const plan=JSON.parse(JSON.stringify(this.plan)),id=crypto.randomUUID(),dir=path.join(this.tempDir,id);fs.mkdirSync(dir);
-  const defaultName=`PhotoBatch_${plan.config.start}-${plan.config.end}_${plan.config.date}_${id.slice(0,8)}`;
+  const plan=JSON.parse(JSON.stringify(this.plan)),id=crypto.randomUUID(),dir=path.join(this.tempDir,id);
+  if(!['Story','Carrusel'].includes(publicationType))throw Error('Elegí Story o Carrusel.');
+  const defaultName=`${publicationType} (${plan.config.date.split('-').reverse().join('-')})`;
   if(typeof customName!=='string'||customName.length>160)throw Error('Nombre ZIP demasiado largo.');
   let basename=customName.trim().replace(/\.zip$/i,'')||defaultName;
   if(basename==='.'||basename==='..'||/[<>:"/\\|?*\x00-\x1f]/.test(basename)||/[. ]$/.test(basename)||/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i.test(basename))throw Error('Nombre ZIP inválido para Windows.');
@@ -17,6 +18,7 @@ class BatchService{
   while(fs.existsSync(path.join(this.downloads,zipName))){zipName=basename+' ('+(suffix++)+').zip';if(suffix>100000)throw Error('No se encontró un nombre disponible.');}
   const zipPath=path.join(this.downloads,zipName),partial=path.join(this.downloads,'.'+id+'.partial');let fd,prepared=false,published=false;this.busy=true;
   try{
+   fs.mkdirSync(dir);
    if(plan.config.start<=this.history.summary().highWater)throw Error('Este rango ya fue utilizado.');fd=fs.openSync(partial,'wx');let zipError=null;const zip=new Zip((err,data)=>{if(err){zipError=err;return;}fs.writeSync(fd,data);}),reports=[];
    for(let i=0;i<plan.items.length;i++){
     const item=plan.items[i],source=this.sources.get(item.id);if(!source)throw Error('Falta una imagen.');this.onProgress({current:i+1,total:plan.items.length,name:item.name});
