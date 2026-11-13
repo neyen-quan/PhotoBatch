@@ -17,7 +17,7 @@ const {_electron:electron}=require('playwright'),path=require('node:path'),fs=re
   };
   for(const [w,h] of [[1360,920],[1200,800],[1020,710]])await verify('photo',w,h);
   await verify('photo',1360,920);fs.mkdirSync('tests/layout-shots',{recursive:true});await page.screenshot({path:'tests/layout-shots/photos.png'});
-  await page.locator('#exportButton').click();await page.waitForSelector('#result:not([hidden])',{timeout:120000});await verify('photo',1360,920);
+  await page.locator('#exportButton').click();await page.waitForSelector('#result:not([hidden])',{timeout:120000});await verify('photo',1360,920);await verify('photo',1020,710);
   await page.locator('#videoMode').click();
   await page.evaluate(()=>{videoSequence=Array.from({length:10},(_,i)=>14099+i*3);videoSlots=videoSequence.map((n,i)=>({id:String(i),name:'original-'+i+'.mp4',size:1024}));renderVideos();});
   for(const [w,h] of [[1360,920],[1200,800],[1020,710]])await verify('video',w,h);
