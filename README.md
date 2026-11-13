@@ -37,3 +37,7 @@ En Videos, elegí la fecha, Desde/Hasta y la zona horaria. Cada video recibe un 
 Sin nombre personalizado, se guarda `Reel (DD-MM-AAAA).zip`; con nombre, se respeta el texto escrito. Si existe, se agrega un sufijo para conservar ambos archivos. Los campos de Videos son independientes de Fotos durante la sesión; al abrir se inicializan con la última fecha y franja guardadas de Fotos.
 
 La fixture `tests/fixtures/video.mp4.base64` es un video sintético de 16×16 con audio silencioso generado con FFmpeg; no contiene archivos de trabajo. Las pruebas leen los metadatos del video exportado real con ExifTool.
+
+### Vista compacta (1.2.17)
+
+Fotos y Videos adaptan las dos filas a la altura disponible. Fecha y zona horaria comparten una fila, con los botones de exportación visibles en la ventana de escritorio. Se retiraron la interfaz de ideas, sus canales IPC y la inicialización de Ollama. Los datos anteriores de preferencias de copy no se borran.

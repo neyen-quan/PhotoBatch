@@ -83,6 +83,9 @@ jobs:
           New-Item -ItemType Directory vendor -Force | Out-Null
           Copy-Item -Path "dist/PhotoBatch-$((Get-Content package.json -Raw | ConvertFrom-Json).version)-Windows/resources/app/vendor/exiftool" -Destination vendor/exiftool -Recurse
           npm test
+          if($LASTEXITCODE -ne 0){throw "Fallaron las pruebas"}
+          node tests/layout-ui.cjs
+          if($LASTEXITCODE -ne 0){throw "Falló la comprobación de la interfaz"}
       - name: Crear parche y canal
         if: steps.plan.outputs.publish == 'true'
         shell: pwsh
