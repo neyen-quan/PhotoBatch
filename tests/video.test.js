@@ -43,3 +43,75 @@ test('real video dates match selected zone and ZIP date, with chronological orde
   await assert.rejects(service.clean(ids,'No guardar',null,{...config,date:'2026-02-30'}),/fecha válida/);assert.deepEqual(fs.readdirSync(downloads),before);
  }finally{fs.rmSync(dir,{recursive:true,force:true,maxRetries:10,retryDelay:50});}
 });
+
+test('video imports are atomic and concurrent imports cannot exceed ten slots', async () => {
+ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-import-'));
+ try {
+  const source = path.join(dir, 'source.mp4');
+  fs.writeFileSync(source, Buffer.alloc(120, 1));
+  const service = new VideoService(path.join(dir, 'Downloads'), path.join(dir, 'state'));
+  const original = await service.add([source]);
+  await assert.rejects(service.add([source, path.join(dir, 'missing.mp4')]), /ENOENT/);
+  assert.deepEqual([...service.files.keys()], original.accepted.map(video => video.id));
+
+  let resume, started;
+  const hold = new Promise(resolve => { resume = resolve; });
+  const entered = new Promise(resolve => { started = resolve; });
+  const importing = service.add(Array(10).fill(source), async () => {
+   started();
+   await hold;
+   return null;
+  });
+  await entered;
+  await assert.rejects(service.add([source]), /operación actual/);
+  assert.throws(() => service.forget(original.accepted.map(video => video.id)), /termine/);
+  resume();
+  const result = await importing;
+  assert.equal(result.accepted.length, 9);
+  assert.equal(result.skipped, 1);
+  assert.equal(service.files.size, 10);
+  assert.equal(service.busy, false);
+  assert.equal((await service.add([source])).skipped, 1);
+ } finally {
+  fs.rmSync(dir, {recursive: true, force: true});
+ }
+});
+
+test('video ZIP streaming handles drain before the next source chunk', {timeout: 2000}, async () => {
+ const {archive} = require('../app/video');
+ const {Readable} = require('node:stream');
+ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-zip-drain-'));
+ const source = path.join(dir, 'source.mp4'), output = path.join(dir, 'archive.zip');
+ const chunks = [Buffer.alloc(4096, 1), Buffer.alloc(4096, 2)];
+ const createReadStream = fs.createReadStream, createWriteStream = fs.createWriteStream;
+ try {
+  fs.createReadStream = file => {
+   assert.equal(file, source);
+   return Readable.from((async function* () {
+    yield chunks[0];
+    await new Promise(resolve => setTimeout(resolve, 40));
+    yield chunks[1];
+   })());
+  };
+  fs.createWriteStream = (file, options) => createWriteStream(file, {...options, highWaterMark: 1});
+  await archive([{name: 'clip_14099.mp4', path: source}], output);
+  const contents = unzipSync(fs.readFileSync(output));
+  assert.deepEqual(Buffer.from(contents['clip_14099.mp4']), Buffer.concat(chunks));
+ } finally {
+  fs.createReadStream = createReadStream;
+  fs.createWriteStream = createWriteStream;
+  fs.rmSync(dir, {recursive: true, force: true});
+ }
+});
+
+test('video ZIP streaming reports an output failure without hanging', {timeout: 2000}, async () => {
+ const {archive} = require('../app/video');
+ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pb-zip-error-'));
+ try {
+  const source = path.join(dir, 'source.mp4');
+  fs.writeFileSync(source, Buffer.alloc(120, 1));
+  await assert.rejects(archive([{name: 'clip.mp4', path: source}], path.join(dir, 'missing', 'archive.zip')), /ENOENT/);
+ } finally {
+  fs.rmSync(dir, {recursive: true, force: true});
+ }
+});

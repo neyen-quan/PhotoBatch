@@ -1,8 +1,8 @@
 {
   "name": "photobatch",
   "productName": "PhotoBatch",
-  "version": "1.2.18",
-  "description": "Organizador local de tandas de imágenes",
+  "version": "1.3.0",
+  "description": "Organizador local de tandas de im\u00e1genes",
   "main": "app/main.js",
   "type": "commonjs",
   "license": "MIT",

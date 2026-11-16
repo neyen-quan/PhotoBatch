@@ -1,6 +1,6 @@
 # PhotoBatch
 
-Aplicación local para organizar tandas de fotos, proponer copies con Ollama y limpiar etiquetas editables de videos. Electron 44, Node 24, ExifTool y fflate.
+Aplicación local para organizar tandas de fotos y limpiar etiquetas editables de videos. Electron 44, Node 24, ExifTool y fflate.
 
 ## Desarrollo
 
@@ -41,3 +41,9 @@ La fixture `tests/fixtures/video.mp4.base64` es un video sintético de 16×16 co
 ### Vista compacta (1.2.17)
 
 Fotos y Videos adaptan las dos filas a la altura disponible. Fecha y zona horaria comparten una fila, con los botones de exportación visibles en la ventana de escritorio. Se retiraron la interfaz de ideas, sus canales IPC y la inicialización de Ollama. Los datos anteriores de preferencias de copy no se borran.
+
+## Versión 1.3.0
+
+Interfaz renovada con navegación superior de Fotos y Videos, tarjetas adaptables y exportación accesible en ventanas de escritorio. La edición de configuración conserva las miniaturas y el foco. Los controles se bloquean durante las operaciones y el pegado respeta el tipo de contenido seleccionado.
+
+La importación de videos es atómica y la escritura de ZIP gestiona correctamente la contrapresión del disco. El cálculo de fechas reutiliza un formateador de zona horaria por tanda. Se conserva el formato existente del historial y del contador de videos.

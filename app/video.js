@@ -1,6 +1,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),{execFile}=require('node:child_process'),{promisify}=require('node:util'),{once}=require('node:events');
 const {Zip,ZipPassThrough}=require('fflate');
+const {finished}=require('node:stream/promises');
 const {durableWrite,syncDirectory}=require('./util');
 const exec=promisify(execFile);
 const {makeMoments,validDate}=require('./batch');
@@ -29,10 +30,77 @@ function saveLastClip(file,last){
  finally{fs.rmSync(tmp,{force:true});}
 }
 async function uniqueZip(downloads,name,date){const requested=zipName(name,date),stem=requested.slice(0,-4);for(let i=0;i<1000;i++){const f=path.join(downloads,`${stem}${i?'-'+(i+1):''}.zip`);try{await fs.promises.access(f);}catch(e){if(e.code==='ENOENT')return f;throw e;}}throw Error('No se encontró un nombre libre en Descargas.');}
-async function archive(files,output){const write=fs.createWriteStream(output,{flags:'wx',highWaterMark:1024*1024});let failed=null,ended=false;write.on('error',e=>{failed=e;});const zip=new Zip((err,bytes,final)=>{if(err){failed=err;write.destroy(err);return;}if(failed)return;if(bytes.length&&!write.write(Buffer.from(bytes)))ended=true;if(final)write.end();});try{for(const f of files){if(failed)throw failed;const entry=new ZipPassThrough(f.name);if(f.date&&f.time){const [y,m,d]=f.date.split('-').map(Number),[h,min,sec]=f.time.split(':').map(Number);entry.mtime=new Date(y,m-1,d,h,min,sec);}zip.add(entry);for await(const chunk of fs.createReadStream(f.path,{highWaterMark:1024*1024})){if(failed)throw failed;if(ended){await once(write,'drain');ended=false;}entry.push(new Uint8Array(chunk),false);}entry.push(new Uint8Array(0),true);}zip.end();await new Promise((resolve,reject)=>{write.once('finish',resolve);write.once('error',reject);});if(failed)throw failed;}catch(e){write.destroy();throw e;}}
+async function archive(files, output) {
+ const write = fs.createWriteStream(output, {flags: 'wx', highWaterMark: 1024 * 1024});
+ const completion = finished(write);
+ // Attach immediately so failures during input reads cannot become unhandled rejections.
+ completion.catch(() => {});
+ let failed = null;
+ write.on('error', error => { failed = error; });
+ const zip = new Zip((error, bytes, final) => {
+  if (error) { failed = error; write.destroy(error); return; }
+  if (failed) return;
+  if (bytes.length) write.write(bytes);
+  if (final) write.end();
+ });
+ try {
+  for (const file of files) {
+   if (failed) throw failed;
+   const entry = new ZipPassThrough(file.name);
+   if (file.date && file.time) {
+    const [year, month, day] = file.date.split('-').map(Number);
+    const [hour, minute, second] = file.time.split(':').map(Number);
+    entry.mtime = new Date(year, month - 1, day, hour, minute, second);
+   }
+   zip.add(entry);
+   for await (const chunk of fs.createReadStream(file.path, {highWaterMark: 1024 * 1024})) {
+    if (failed) throw failed;
+    entry.push(chunk, false);
+    // Observe backpressure immediately. Waiting until the next input chunk can miss drain.
+    if (write.writableNeedDrain) await once(write, 'drain');
+   }
+   entry.push(new Uint8Array(0), true);
+   if (write.writableNeedDrain) await once(write, 'drain');
+  }
+  if (failed) throw failed;
+  zip.end();
+  await completion;
+ } catch (error) {
+  zip.terminate();
+  write.destroy();
+  await completion.catch(() => {});
+  throw error;
+ }
+}
 class VideoService{
  constructor(downloads,stateDir){this.downloads=downloads;this.sequenceFile=path.join(stateDir,'video-sequence.json');this.files=new Map();this.busy=false;this.sequence=null;}
- async add(paths,thumbnail){if(this.busy)throw Error('Esperá a que termine la limpieza.');if(!Array.isArray(paths)||!paths.length||paths.length>20)throw Error('Elegí hasta 10 videos.');this.sequence??=createSequence(readLastClip(this.sequenceFile));const remaining=10-this.files.size,accepted=[];for(const file of paths.slice(0,Math.max(0,remaining))){if(typeof file!=='string'||!path.isAbsolute(file)||!FORMATS.has(path.extname(file).toLowerCase()))throw Error('Usá videos MP4, MOV o M4V.');const stat=await fs.promises.stat(file);if(!stat.isFile()||stat.size<100)throw Error('Archivo de video inválido: '+path.basename(file));const id=crypto.randomUUID(),entry={file,size:stat.size,mtimeMs:stat.mtimeMs};let preview=null;try{preview=await thumbnail?.(file);}catch{}this.files.set(id,entry);accepted.push({id,name:path.basename(file),size:stat.size,preview});}return {accepted,skipped:paths.length-accepted.length,sequence:this.sequence};}
+ async add(paths, thumbnail) {
+  if (this.busy) throw Error('Esperá a que termine la operación actual.');
+  if (!Array.isArray(paths) || !paths.length || paths.length > 20) throw Error('Elegí hasta 10 videos.');
+  this.busy = true;
+  try {
+   this.sequence ??= createSequence(readLastClip(this.sequenceFile));
+   const remaining = Math.max(0, 10 - this.files.size);
+   const accepted = [], pending = new Map();
+   for (const file of paths.slice(0, remaining)) {
+    if (typeof file !== 'string' || !path.isAbsolute(file) || !FORMATS.has(path.extname(file).toLowerCase())) {
+     throw Error('Usá videos MP4, MOV o M4V.');
+    }
+    const stat = await fs.promises.stat(file);
+    if (!stat.isFile() || stat.size < 100) throw Error('Archivo de video inválido: ' + path.basename(file));
+    const id = crypto.randomUUID();
+    let preview = null;
+    try { preview = await thumbnail?.(file); } catch {}
+    pending.set(id, {file, size: stat.size, mtimeMs: stat.mtimeMs});
+    accepted.push({id, name: path.basename(file), size: stat.size, preview});
+   }
+   // Commit only after every input was accepted, so a failed import leaves no hidden videos.
+   for (const [id, entry] of pending) this.files.set(id, entry);
+   return {accepted, skipped: paths.length - accepted.length, sequence: this.sequence};
+  } finally {
+   this.busy = false;
+  }
+ }
  forget(ids){if(this.busy)throw Error('Esperá a que termine la limpieza.');for(const id of ids)this.files.delete(id);}
  async clean(ids,name,onProgress,config){if(this.busy)throw Error('Ya se están procesando videos.');if(!Array.isArray(ids)||!ids.length||ids.length>10||new Set(ids).size!==ids.length||ids.some(id=>!this.files.has(id)))throw Error('Volvé a seleccionar los videos.');this.sequence??=createSequence(readLastClip(this.sequenceFile));const moments=config?makeMoments(config,ids.length):null;const entries=ids.map(id=>this.files.get(id));if(entries.reduce((sum,e)=>sum+e.size,0)>3*1024*1024*1024)throw Error('La tanda supera los 3 GiB. Dividila en dos ZIP.');this.busy=true;let stage;try{await fs.promises.mkdir(this.downloads,{recursive:true});stage=await fs.promises.mkdtemp(path.join(this.downloads,'.photobatch-videos-'));const cleaned=[];for(let i=0;i<ids.length;i++){const entry=entries[i];onProgress?.({current:i,total:ids.length,name:path.basename(entry.file)});try{const stat=await fs.promises.stat(entry.file);if(stat.size!==entry.size||stat.mtimeMs!==entry.mtimeMs)throw Error('El original cambió desde que lo cargaste.');const target=path.join(stage,`${i+1}.`+path.extname(entry.file).slice(1).toLowerCase());const result=await this.cleanOne(entry.file,target,moments?.[i]);cleaned.push({...result,path:target,originalName:path.basename(entry.file),name:outputName(this.sequence[i],entry.file),...moments?.[i]});}catch(e){throw Error(`${path.basename(entry.file)}: ${e.message}`);}}onProgress?.({current:ids.length,total:ids.length,name:'Creando ZIP'});const target=await uniqueZip(this.downloads,name,config?.date),temporary=path.join(stage,'archive.zip');await archive(cleaned,temporary);const stat=await fs.promises.stat(temporary);if(stat.size<100)throw Error('El ZIP quedó incompleto.');// Reserve only the numbers in the finished ZIP, before making it visible.
  const last=this.sequence[ids.length-1];

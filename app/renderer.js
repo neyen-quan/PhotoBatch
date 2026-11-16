@@ -1,74 +1,930 @@
 'use strict';
-const api=window.photoBatch,$=id=>document.getElementById(id),formIds=['start','size','date','from','to','zone'];
-let slots=Array(10).fill(null),plan=null,busy=false,loading=false,selected=0,lastResult=null,dragged=null,disabled=false;
-let videoSlots=Array(10).fill(null),videoSequence=[],videoBusy=false,videoLoading=false,videoDragged=null,mode="photo";
-const videoFormIds=['videoDate','videoFrom','videoTo','videoZone'];
-const now=new Date();$('date').value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
-function notice(text,success=false){$('notice').hidden=!text;$('notice').textContent=text||'';$('notice').classList.toggle('success',success);}
-function config(){return Object.fromEntries(formIds.map(id=>[id,$(id).value]));}
-function items(){return slots.filter(Boolean).map(x=>({id:x.id,camera:x.camera}));}
-function invalidate(){plan=null;$('result').hidden=true;render();}
-function zipType(){return $('zipType').getAttribute('aria-checked')==='true'?'Carrusel':'Story';}
-function controls(){const vd=$('videoDate').value;$('videoZipName').placeholder=vd?`Reel (${vd.split('-').reverse().join('-')}).zip`:'Reel (fecha elegida).zip';for(const id of [...videoFormIds,'videoZipName'])$(id).disabled=videoBusy;const date=$('date').value;$('zipName').placeholder=date?`${zipType()} (${date.split('-').reverse().join('-')}).zip`:'Automático si se deja vacío';$('zipType').disabled=$('zipName').disabled=busy;const count=slots.filter(Boolean).length;$('count').textContent=`${count} / 10`;$('previewButton').disabled=disabled||busy||loading||!count;$('exportButton').disabled=disabled||busy||loading||!plan;$('updateButton').disabled=busy||loading||videoBusy;$('videoPick').disabled=videoBusy||videoLoading||videoSlots.every(Boolean);$('videoClean').disabled=videoBusy||videoLoading||!videoSlots.some(Boolean);$('videoClear').disabled=videoBusy||videoLoading||!videoSlots.some(Boolean);$('photoMode').disabled=$('videoMode').disabled=busy||videoBusy;$('addButton').disabled=disabled||busy||loading||count===10;$('clearButton').disabled=busy||loading||!count;for(const id of formIds)$(id).disabled=disabled||busy;document.body.classList.toggle('busy',busy);$('exportHint').textContent=plan?'Vista previa lista. Se exportarán estos nombres y horarios.':count?'Generá una vista previa para revisar nombres y horarios.':'Primero cargá las fotos y generá una vista previa.';const a=Number($('start').value),b=Number($('size').value);$('rangeLabel').textContent=Number.isInteger(a)&&b>0?`${a} — ${a+b-1}`:'—';}
-function render(){const root=$('slots');root.replaceChildren();slots.forEach((photo,index)=>{
- const card=el('div','slot'+(photo?' filled':'')+(selected===index?' selected':''));card.tabIndex=0;card.dataset.index=index;card.setAttribute('aria-label',photo?`Foto ${index+1}: ${photo.name}`:`Espacio ${index+1}: agregar foto`);
- card.onclick=()=>{selected=index;if(!photo&&!busy&&!loading)pick(index);else render();};card.onkeydown=e=>{if(e.key==='Enter'&&!photo){e.preventDefault();pick(index);}if(e.altKey&&['ArrowLeft','ArrowRight'].includes(e.key)&&photo&&!busy){const j=index+(e.key==='ArrowLeft'?-1:1);if(j>=0&&j<10){[slots[index],slots[j]]=[slots[j],slots[index]];selected=j;invalidate();}}};
- card.ondragover=e=>{e.preventDefault();if(!busy)card.classList.add('over');};card.ondragleave=()=>card.classList.remove('over');card.ondrop=async e=>{e.preventDefault();e.stopPropagation();card.classList.remove('over');if(busy||loading)return;if(dragged!==null){const from=dragged;dragged=null;[slots[from],slots[index]]=[slots[index],slots[from]];selected=index;invalidate();return;}await addFiles([...e.dataTransfer.files],index);};
- if(photo){card.draggable=!busy;card.ondragstart=e=>{dragged=index;e.dataTransfer.setData('text/plain','PhotoBatch:'+index);e.dataTransfer.effectAllowed='move';};card.ondragend=()=>{dragged=null;};const img=el('img','photo');img.src=photo.preview;img.alt=photo.name;img.draggable=false;card.append(img,el('span','slot-badge',String(index+1).padStart(2,'0')));
-  const remove=el('button','remove','×');remove.title='Quitar foto';remove.disabled=busy;remove.onclick=async e=>{e.stopPropagation();slots[index]=null;await api.forget([photo.id]);invalidate();};card.append(remove);
-  const p=plan?.items.find(x=>x.id===photo.id),name=el('div','photo-name',p?p.name:photo.name);name.title=p?p.name:photo.name;card.append(name,el('div','photo-time',p?`${p.time} · ${p.offset}`:`${photo.width} × ${photo.height}`));
-  const buttons=el('div','card-controls'),camera=el('button','camera'+(photo.camera==='front'?' front':''),photo.camera==='front'?'◉ Frontal':'◎ Trasera');camera.title='Cambiar cámara';camera.disabled=busy;camera.onclick=e=>{e.stopPropagation();photo.camera=photo.camera==='front'?'back':'front';invalidate();};const info=el('button','info-button','i');info.title='Ver metadatos originales';info.disabled=busy;info.onclick=e=>{e.stopPropagation();showOriginal(photo);};buttons.append(camera,info);card.append(buttons);
- }else card.append(el('div','empty-plus','+'),el('div','empty-label',`FOTO ${String(index+1).padStart(2,'0')}`),el('div','empty-help','Arrastrá o elegí'));
- root.append(card);
- });controls();}
-async function reducePreview(source){if(source.format!=='webp')return source;const image=new Image();image.src=source.preview;await image.decode();const scale=Math.min(1,480/image.naturalWidth,360/image.naturalHeight),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);source.preview=canvas.toDataURL('image/png');return source;}
-async function importSequential(values,start,importer){if(busy||loading||disabled)return;loading=true;controls();notice('');let index=start,errors=[];try{for(const value of values){if(index<0||index>=10){errors.push('Se alcanzó el máximo de 10 fotos.');break;}try{const source=await reducePreview(await importer(value)),old=slots[index];slots[index]={...source,camera:'back'};if(old)await api.forget([old.id]);index++;while(index<10&&slots[index])index++;}catch(e){errors.push(e.message);}}plan=null;$('result').hidden=true;}finally{loading=false;render();if(errors.length)notice([...new Set(errors)].join(' '));}}
-async function addFiles(files,start){if(!files.length){notice('Ese arrastre no incluye el archivo original. Descargá la imagen y arrastrá el archivo desde su carpeta.');return;}await importSequential(files,start,file=>api.importFile(file));}
-async function pick(start){try{const files=await api.pick();if(files.length)await importSequential(files,start,file=>api.importPath(file));}catch(e){notice(e.message);}}
-function updateHistory(h){const r=h.last;if(r){$('lastRange').textContent=`${r.start} — ${r.end}`;$('lastUsed').textContent=`Última foto: IMG_${String(r.items.at(-1).number).padStart(4,'0')} · ${r.items.length} imágenes`;$('lastDate').textContent=r.date.split('-').reverse().join('/');$('lastTime').textContent=`${r.from} — ${r.to} · ${r.zone}`;$('nextNumber').textContent=String(h.highWater+1);$('start').min=String(h.highWater+1);}}
-function openModal(title){$('modalTitle').textContent=title;$('modalBody').replaceChildren();$('modalActions').replaceChildren();if(!$('modal').open)$('modal').showModal();return $('modalBody');}
-function metadataTable(meta){const table=el('table');for(const [key,value]of Object.entries(meta)){if(key==='SourceFile'||key.startsWith('System:'))continue;const row=el('tr');row.append(el('td','key',key),el('td','value',typeof value==='object'?JSON.stringify(value):String(value)));table.append(row);}return table;}
-async function showOriginal(photo){try{const body=openModal('Metadatos originales · '+photo.name);body.append(el('p','muted','Leyendo el archivo original…'));body.replaceChildren(metadataTable(await api.metadata(photo.id)));}catch(e){notice(e.message);}}
-function showReport(receipt){const body=openModal('Comprobación de la exportación');body.append(el('div','report-summary',`${receipt.items.length} imágenes verificadas. Mismos datos comprimidos, dimensiones, color y orientación. Los campos de cámara y fecha se escribieron en las copias. Sin GPS.`));for(const r of receipt.reports||[]){const d=el('details','report-card');d.append(el('summary','',`${r.name} · ${r.width} × ${r.height} · ${r.camera==='front'?'Frontal':'Trasera'} · ${r.time}`),el('p','',`Original: ${r.sourceName}. Bloques retirados: ${r.removedBlocks.join(', ')||'ninguno'}. SHA-256 del contenido de imagen: ${r.imageSHA256}`),metadataTable(r.metadata));body.append(d);}}
-async function showHistory(){try{const h=await api.history();updateHistory(h);const body=openModal('Historial de tandas');if(!h.count)body.append(el('p','muted','Todavía no exportaste ninguna tanda.'));else{body.append(el('p','muted',`${h.count} tandas guardadas. Se muestran las últimas 20.`));const table=el('table'),head=el('tr');for(const x of ['Rango','Fecha y horario','Fotos',''])head.append(el('th','',x));table.append(head);for(const r of h.recent){const tr=el('tr');tr.append(el('td','',`${r.start}–${r.end}`),el('td','',`${r.date} · ${r.from}–${r.to}`),el('td','',String(r.items.length)));const td=el('td'),button=el('button','text-button','Ver comprobación');button.onclick=()=>showReport(r);td.append(button);tr.append(td);table.append(tr);}body.append(table);}
- const backup=el('button','secondary','Guardar respaldo en Descargas'),restore=el('button','quiet','Restaurar respaldo');backup.onclick=async()=>{try{await api.backup();notice('Respaldo del historial guardado en Descargas.',true);$('modal').close();}catch(e){notice(e.message);}};restore.onclick=async()=>{try{const r=await api.restore();if(r){updateHistory(r.history);$('start').value=r.history.highWater+1;invalidate();notice(`Historial restaurado: ${r.count} tandas incorporadas.`,true);$('modal').close();}}catch(e){notice(e.message);}};$('modalActions').append(backup,restore);
- }catch(e){notice(e.message);}}
-$('addButton').onclick=()=>pick(slots.indexOf(null));$('clearButton').onclick=async()=>{const ids=slots.filter(Boolean).map(x=>x.id);slots=Array(10).fill(null);await api.forget(ids);notice('');invalidate();};
-formIds.forEach(id=>$(id).addEventListener('input',invalidate));
-$('zipType').onclick=()=>{const button=$('zipType');button.setAttribute('aria-checked',String(zipType()==='Story'));controls();};
-$('previewButton').onclick=async()=>{try{notice('');plan=await api.preview(config(),items());$('result').hidden=true;render();}catch(e){notice(e.message);}};
-$('exportButton').onclick=async()=>{if(!plan||busy)return;busy=true;notice('');$('progress').hidden=false;controls();try{const r=await api.export(plan.token,$('zipName').value,zipType());lastResult=r.receipt;updateHistory(r.history);plan=null;$('start').value=r.history.highWater+1;$('resultName').textContent=r.receipt.zipName;$('resultDetail').textContent=`${r.receipt.items.length} imágenes verificadas · originales intactos`;$('result').hidden=false;notice('');}catch(e){notice(e.message);}finally{busy=false;$('progress').hidden=true;render();}};
-api.onProgress(p=>{$('progress').querySelector('progress').max=p.total;$('progress').querySelector('progress').value=p.current;$('progressLabel').textContent=`${p.current}/${p.total} · Verificando ${p.name}`;});
-$('resultReport').onclick=()=>lastResult&&showReport(lastResult);$('historyButton').onclick=showHistory;$('downloadsButton').onclick=()=>api.openDownloads();$('updateButton').onclick=async()=>{const body=openModal('Actualizar PhotoBatch');const version=document.querySelector('.version').textContent,installed=el('p','',`Versión instalada: ${version}`),available=el('p','muted','Versión disponible: todavía no consultada.'),status=el('p','micro','');const field=el('input');field.type='url';field.setAttribute('aria-label','Dirección del canal');field.placeholder='https://github.com/.../latest.json';field.value=await api.getUpdateChannel().catch(()=>'');const label=el('label','', 'Canal de actualizaciones');label.append(field);const search=el('button','secondary','Buscar actualizaciones'),save=el('button','secondary','Guardar canal'),install=el('button','primary','Descargar e instalar'),local=el('button','quiet','Instalar ZIP local');install.disabled=true;let info=null;
- search.onclick=async()=>{search.disabled=true;status.textContent='Consultando GitHub…';try{info=await api.checkUpdate();available.textContent=`Versión disponible: ${info.available}`;install.disabled=!info.patch;status.textContent=info.upToDate?'Ya tenés la última versión.':info.unsupported?'Hay una versión nueva, pero no hay parche compatible con esta instalación.':`Parche compatible: ${info.installed} → ${info.available}.`;}catch(e){status.textContent=e.message;}finally{search.disabled=false;}};
- save.onclick=async()=>{try{field.value=await api.setUpdateChannel(field.value);info=null;install.disabled=true;available.textContent='Versión disponible: todavía no consultada.';status.textContent='Canal guardado. Tocá Buscar actualizaciones.';}catch(e){status.textContent=e.message;}};
- install.onclick=async()=>{install.disabled=true;status.textContent='Descargando y verificando el parche…';try{const r=await api.installOnlineUpdate();status.textContent=r?.canceled?'Instalación cancelada.':'Cerrando para instalar…';}catch(e){status.textContent=e.message;install.disabled=false;}};
- local.onclick=async()=>{try{const r=await api.update();status.textContent=r?.canceled?'Selección cancelada.':'Cerrando para instalar el ZIP…';}catch(e){status.textContent=e.message;}};
- body.append(installed,available,label,status);$('modalActions').append(search,save,install,local);
-};$('closeModal').onclick=()=>$('modal').close();
-document.addEventListener('dragover',e=>e.preventDefault());document.addEventListener('drop',e=>e.preventDefault());document.addEventListener('paste',e=>{if(['INPUT','TEXTAREA'].includes(document.activeElement.tagName))return;const files=[...e.clipboardData.files];if(files.length){e.preventDefault();addFiles(files,slots[selected]?slots.indexOf(null):selected);}});
-(async()=>{try{const state=await api.init();if(state.error){disabled=true;notice('No se pudo abrir el historial: '+state.error);}else{updateHistory(state.history);if(state.history.last){$('start').value=state.history.highWater+1;$('date').value=state.history.last.date;$('from').value=state.history.last.from;$('to').value=state.history.last.to;$('zone').value=state.history.last.zone;}}document.querySelector('.version').textContent=state.version;for(const [v,p] of [['videoDate','date'],['videoFrom','from'],['videoTo','to'],['videoZone','zone']])$(v).value=$(p).value;}catch(e){disabled=true;notice(e.message);}render();})();
+const api = window.photoBatch,
+  $ = (id) => document.getElementById(id),
+  formIds = ['start', 'size', 'date', 'from', 'to', 'zone'];
+let slots = Array(10).fill(null),
+  plan = null,
+  busy = false,
+  loading = false,
+  selected = 0,
+  lastResult = null,
+  dragged = null,
+  disabled = false;
+let videoSlots = Array(10).fill(null),
+  videoSequence = [],
+  videoBusy = false,
+  videoLoading = false,
+  videoDragged = null,
+  mode = 'photo';
+const videoFormIds = ['videoDate', 'videoFrom', 'videoTo', 'videoZone'];
+const now = new Date();
+$('date').value =
+  `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function notice(text, success = false) {
+  $('notice').hidden = !text;
+  $('notice').textContent = text || '';
+  $('notice').classList.toggle('success', success);
+}
+function config() {
+  return Object.fromEntries(formIds.map((id) => [id, $(id).value]));
+}
+function items() {
+  return slots.filter(Boolean).map((x) => ({ id: x.id, camera: x.camera }));
+}
+function operationPending() {
+  return busy || loading || videoBusy || videoLoading;
+}
+function invalidate(cardsChanged = true) {
+  const hadPreview = Boolean(plan);
+  plan = null;
+  $('result').hidden = true;
+  if (cardsChanged || hadPreview) render();
+  else controls();
+}
+function zipType() {
+  return $('zipType').getAttribute('aria-checked') === 'true'
+    ? 'Carrusel'
+    : 'Story';
+}
+function controls() {
+  const locked = operationPending();
+  const videoDate = $('videoDate').value;
+  $('videoZipName').placeholder = videoDate
+    ? `Reel (${videoDate.split('-').reverse().join('-')}).zip`
+    : 'Reel (fecha elegida).zip';
+  for (const id of [...videoFormIds, 'videoZipName']) $(id).disabled = locked;
+  const date = $('date').value;
+  $('zipName').placeholder = date
+    ? `${zipType()} (${date.split('-').reverse().join('-')}).zip`
+    : 'Automático si se deja vacío';
+  $('zipType').disabled = $('zipName').disabled = locked;
+  const count = slots.filter(Boolean).length;
+  $('count').textContent = `${count} / 10`;
+  $('previewButton').disabled = disabled || locked || !count;
+  $('exportButton').disabled = disabled || locked || !plan;
+  $('updateButton').disabled = $('historyButton').disabled = locked;
+  $('videoPick').disabled = locked || videoSlots.every(Boolean);
+  $('videoClean').disabled = locked || !videoSlots.some(Boolean);
+  $('videoClear').disabled = locked || !videoSlots.some(Boolean);
+  $('photoMode').disabled = $('videoMode').disabled = locked;
+  $('addButton').disabled = disabled || locked || count === 10;
+  $('clearButton').disabled = locked || !count;
+  for (const id of formIds) $(id).disabled = disabled || locked;
+  for (const card of document.querySelectorAll('.slot')) {
+    card.draggable = card.classList.contains('filled') && !locked;
+    card.setAttribute('aria-disabled', String(locked));
+    for (const button of card.querySelectorAll('button'))
+      button.disabled = locked;
+  }
+  $('slots').setAttribute('aria-busy', String(busy || loading));
+  $('videoSlots').setAttribute('aria-busy', String(videoBusy || videoLoading));
+  document.body.classList.toggle('busy', busy);
+  $('exportHint').textContent = plan
+    ? 'Vista previa lista. Se exportarán estos nombres y horarios.'
+    : count
+      ? 'Generá una vista previa para revisar nombres y horarios.'
+      : 'Primero cargá las fotos y generá una vista previa.';
+  const rangeStart = Number($('start').value);
+  const rangeSize = Number($('size').value);
+  $('rangeLabel').textContent =
+    Number.isInteger(rangeStart) && rangeSize > 0
+      ? `${rangeStart} — ${rangeStart + rangeSize - 1}`
+      : '—';
+}
+function render() {
+  const root = $('slots');
+  const restoreFocus = root.contains(document.activeElement);
+  root.replaceChildren();
+  slots.forEach((photo, index) => {
+    const card = el(
+      'div',
+      'slot' +
+        (photo ? ' filled' : '') +
+        (selected === index ? ' selected' : '')
+    );
+    card.tabIndex = 0;
+    card.dataset.index = index;
+    card.setAttribute(
+      'aria-label',
+      photo
+        ? `Foto ${index + 1}: ${photo.name}`
+        : `Espacio ${index + 1}: agregar foto`
+    );
+    card.onclick = () => {
+      if (operationPending()) return;
+      selected = index;
+      for (const item of root.children) {
+        item.classList.toggle('selected', Number(item.dataset.index) === index);
+      }
+      if (!photo) pick(index);
+    };
+    card.onkeydown = (e) => {
+      if (operationPending()) return;
+      if (e.key === 'Enter' && !photo) {
+        e.preventDefault();
+        pick(index);
+      }
+      if (e.altKey && ['ArrowLeft', 'ArrowRight'].includes(e.key) && photo) {
+        const j = index + (e.key === 'ArrowLeft' ? -1 : 1);
+        if (j >= 0 && j < 10) {
+          [slots[index], slots[j]] = [slots[j], slots[index]];
+          selected = j;
+          invalidate();
+        }
+      }
+    };
+    card.ondragover = (e) => {
+      e.preventDefault();
+      if (!operationPending()) card.classList.add('over');
+    };
+    card.ondragleave = () => card.classList.remove('over');
+    card.ondrop = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      card.classList.remove('over');
+      if (operationPending()) return;
+      if (dragged !== null) {
+        const from = dragged;
+        dragged = null;
+        [slots[from], slots[index]] = [slots[index], slots[from]];
+        selected = index;
+        invalidate();
+        return;
+      }
+      await addFiles([...e.dataTransfer.files], index);
+    };
+    if (photo) {
+      card.draggable = !busy;
+      card.ondragstart = (e) => {
+        if (operationPending()) {
+          e.preventDefault();
+          return;
+        }
+        dragged = index;
+        e.dataTransfer.setData('text/plain', 'PhotoBatch:' + index);
+        e.dataTransfer.effectAllowed = 'move';
+      };
+      card.ondragend = () => {
+        dragged = null;
+      };
+      const img = el('img', 'photo');
+      img.src = photo.preview;
+      img.alt = photo.name;
+      img.draggable = false;
+      card.append(
+        img,
+        el('span', 'slot-badge', String(index + 1).padStart(2, '0'))
+      );
+      const remove = el('button', 'remove', '×');
+      remove.title = 'Quitar foto';
+      remove.setAttribute('aria-label', `Quitar ${photo.name}`);
+      remove.disabled = busy;
+      remove.onclick = async (e) => {
+        e.stopPropagation();
+        if (operationPending()) return;
+        loading = true;
+        controls();
+        try {
+          await api.forget([photo.id]);
+          slots[index] = null;
+          invalidate();
+        } catch (error) {
+          notice(error.message);
+        } finally {
+          loading = false;
+          controls();
+        }
+      };
+      card.append(remove);
+      const p = plan?.items.find((x) => x.id === photo.id),
+        name = el('div', 'photo-name', p ? p.name : photo.name);
+      name.title = p ? p.name : photo.name;
+      card.append(
+        name,
+        el(
+          'div',
+          'photo-time',
+          p ? `${p.time} · ${p.offset}` : `${photo.width} × ${photo.height}`
+        )
+      );
+      const buttons = el('div', 'card-controls'),
+        camera = el(
+          'button',
+          'camera' + (photo.camera === 'front' ? ' front' : ''),
+          photo.camera === 'front' ? '◉ Frontal' : '◎ Trasera'
+        );
+      camera.title = 'Cambiar cámara';
+      camera.disabled = busy;
+      camera.onclick = (e) => {
+        e.stopPropagation();
+        if (operationPending()) return;
+        selected = index;
+        photo.camera = photo.camera === 'front' ? 'back' : 'front';
+        invalidate();
+      };
+      const info = el('button', 'info-button', 'i');
+      info.title = 'Ver metadatos originales';
+      info.setAttribute('aria-label', `Ver metadatos de ${photo.name}`);
+      info.disabled = busy;
+      info.onclick = (e) => {
+        e.stopPropagation();
+        if (!operationPending()) showOriginal(photo);
+      };
+      buttons.append(camera, info);
+      card.append(buttons);
+    } else
+      card.append(
+        el('div', 'empty-plus', '+'),
+        el('div', 'empty-label', `FOTO ${String(index + 1).padStart(2, '0')}`),
+        el('div', 'empty-help', 'Arrastrá o elegí')
+      );
+    root.append(card);
+  });
+  controls();
+  if (restoreFocus) root.children[selected]?.focus({ preventScroll: true });
+}
+async function reducePreview(source) {
+  if (!source.preview.startsWith('data:image/webp;')) return source;
+  const image = new Image();
+  image.src = source.preview;
+  await image.decode();
+  const scale = Math.min(
+      1,
+      480 / image.naturalWidth,
+      360 / image.naturalHeight
+    ),
+    canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  source.preview = canvas.toDataURL('image/png');
+  return source;
+}
+async function importSequential(values, start, importer) {
+  if (operationPending() || disabled) return;
+  loading = true;
+  controls();
+  notice('');
+  let index = start,
+    errors = [];
+  try {
+    for (const value of values) {
+      if (index < 0 || index >= 10) {
+        errors.push('Se alcanzó el máximo de 10 fotos.');
+        break;
+      }
+      try {
+        const source = await importer(value);
+        try {
+          await reducePreview(source);
+        } catch (error) {
+          await api.forget([source.id]);
+          throw error;
+        }
+        const old = slots[index];
+        slots[index] = { ...source, camera: 'back' };
+        if (old) await api.forget([old.id]);
+        index++;
+        while (index < 10 && slots[index]) index++;
+      } catch (e) {
+        errors.push(e.message);
+      }
+    }
+    plan = null;
+    $('result').hidden = true;
+  } finally {
+    loading = false;
+    render();
+    if (errors.length) notice([...new Set(errors)].join(' '));
+  }
+}
+async function addFiles(files, start) {
+  if (!files.length) {
+    notice(
+      'Ese arrastre no incluye el archivo original. Descargá la imagen y arrastrá el archivo desde su carpeta.'
+    );
+    return;
+  }
+  await importSequential(files, start, (file) => api.importFile(file));
+}
+async function pick(start) {
+  if (operationPending() || disabled) return;
+  loading = true;
+  controls();
+  try {
+    const files = await api.pick();
+    loading = false;
+    if (files.length)
+      await importSequential(files, start, (file) => api.importPath(file));
+  } catch (e) {
+    notice(e.message);
+  } finally {
+    loading = false;
+    controls();
+  }
+}
+function updateHistory(h) {
+  const r = h.last;
+  if (r) {
+    $('lastRange').textContent = `${r.start} — ${r.end}`;
+    $('lastUsed').textContent =
+      `Última foto: IMG_${String(r.items.at(-1).number).padStart(4, '0')} · ${r.items.length} imágenes`;
+    $('lastDate').textContent = r.date.split('-').reverse().join('/');
+    $('lastTime').textContent = `${r.from} — ${r.to} · ${r.zone}`;
+    $('nextNumber').textContent = String(h.highWater + 1);
+    $('start').min = String(h.highWater + 1);
+  }
+}
+function openModal(title) {
+  $('modalTitle').textContent = title;
+  $('modalBody').replaceChildren();
+  $('modalActions').replaceChildren();
+  if (!$('modal').open) $('modal').showModal();
+  return $('modalBody');
+}
+function metadataTable(meta) {
+  const table = el('table');
+  for (const [key, value] of Object.entries(meta)) {
+    if (key === 'SourceFile' || key.startsWith('System:')) continue;
+    const row = el('tr');
+    row.append(
+      el('td', 'key', key),
+      el(
+        'td',
+        'value',
+        typeof value === 'object' ? JSON.stringify(value) : String(value)
+      )
+    );
+    table.append(row);
+  }
+  return table;
+}
+async function showOriginal(photo) {
+  try {
+    const body = openModal('Metadatos originales · ' + photo.name);
+    body.append(el('p', 'muted', 'Leyendo el archivo original…'));
+    body.replaceChildren(metadataTable(await api.metadata(photo.id)));
+  } catch (e) {
+    notice(e.message);
+  }
+}
+function showReport(receipt) {
+  const body = openModal('Comprobación de la exportación');
+  body.append(
+    el(
+      'div',
+      'report-summary',
+      `${receipt.items.length} imágenes verificadas. Mismos datos comprimidos, dimensiones, color y orientación. Los campos de cámara y fecha se escribieron en las copias. Sin GPS.`
+    )
+  );
+  for (const r of receipt.reports || []) {
+    const d = el('details', 'report-card');
+    d.append(
+      el(
+        'summary',
+        '',
+        `${r.name} · ${r.width} × ${r.height} · ${r.camera === 'front' ? 'Frontal' : 'Trasera'} · ${r.time}`
+      ),
+      el(
+        'p',
+        '',
+        `Original: ${r.sourceName}. Bloques retirados: ${r.removedBlocks.join(', ') || 'ninguno'}. SHA-256 del contenido de imagen: ${r.imageSHA256}`
+      ),
+      metadataTable(r.metadata)
+    );
+    body.append(d);
+  }
+}
+async function showHistory() {
+  try {
+    const h = await api.history();
+    updateHistory(h);
+    const body = openModal('Historial de tandas');
+    if (!h.count)
+      body.append(el('p', 'muted', 'Todavía no exportaste ninguna tanda.'));
+    else {
+      body.append(
+        el(
+          'p',
+          'muted',
+          `${h.count} tandas guardadas. Se muestran las últimas 20.`
+        )
+      );
+      const table = el('table'),
+        head = el('tr');
+      for (const x of ['Rango', 'Fecha y horario', 'Fotos', ''])
+        head.append(el('th', '', x));
+      table.append(head);
+      for (const r of h.recent) {
+        const tr = el('tr');
+        tr.append(
+          el('td', '', `${r.start}–${r.end}`),
+          el('td', '', `${r.date} · ${r.from}–${r.to}`),
+          el('td', '', String(r.items.length))
+        );
+        const td = el('td'),
+          button = el('button', 'text-button', 'Ver comprobación');
+        button.onclick = () => showReport(r);
+        td.append(button);
+        tr.append(td);
+        table.append(tr);
+      }
+      body.append(table);
+    }
+    const backup = el('button', 'secondary', 'Guardar respaldo en Descargas'),
+      restore = el('button', 'quiet', 'Restaurar respaldo');
+    backup.onclick = async () => {
+      try {
+        await api.backup();
+        notice('Respaldo del historial guardado en Descargas.', true);
+        $('modal').close();
+      } catch (e) {
+        notice(e.message);
+      }
+    };
+    restore.onclick = async () => {
+      try {
+        const r = await api.restore();
+        if (r) {
+          updateHistory(r.history);
+          $('start').value = r.history.highWater + 1;
+          invalidate();
+          notice(`Historial restaurado: ${r.count} tandas incorporadas.`, true);
+          $('modal').close();
+        }
+      } catch (e) {
+        notice(e.message);
+      }
+    };
+    $('modalActions').append(backup, restore);
+  } catch (e) {
+    notice(e.message);
+  }
+}
+$('addButton').onclick = () => pick(slots.indexOf(null));
+$('clearButton').onclick = async () => {
+  if (operationPending()) return;
+  loading = true;
+  controls();
+  try {
+    await api.forget(slots.filter(Boolean).map((photo) => photo.id));
+    slots = Array(10).fill(null);
+    notice('');
+    invalidate();
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    loading = false;
+    controls();
+  }
+};
+formIds.forEach((id) =>
+  $(id).addEventListener('input', () => invalidate(false))
+);
+$('zipType').onclick = () => {
+  const button = $('zipType');
+  button.setAttribute('aria-checked', String(zipType() === 'Story'));
+  controls();
+};
+$('previewButton').onclick = async () => {
+  if (operationPending() || disabled) return;
+  loading = true;
+  controls();
+  try {
+    notice('');
+    plan = await api.preview(config(), items());
+    $('result').hidden = true;
+    render();
+  } catch (e) {
+    notice(e.message);
+  } finally {
+    loading = false;
+    controls();
+  }
+};
+$('exportButton').onclick = async () => {
+  if (!plan || operationPending() || disabled) return;
+  busy = true;
+  notice('');
+  $('progress').hidden = false;
+  controls();
+  try {
+    const r = await api.export(plan.token, $('zipName').value, zipType());
+    lastResult = r.receipt;
+    updateHistory(r.history);
+    plan = null;
+    $('start').value = r.history.highWater + 1;
+    $('resultName').textContent = r.receipt.zipName;
+    $('resultDetail').textContent =
+      `${r.receipt.items.length} imágenes verificadas · originales intactos`;
+    $('result').hidden = false;
+    notice('');
+  } catch (e) {
+    notice(e.message);
+  } finally {
+    busy = false;
+    $('progress').hidden = true;
+    render();
+  }
+};
+api.onProgress((p) => {
+  $('progress').querySelector('progress').max = p.total;
+  $('progress').querySelector('progress').value = p.current;
+  $('progressLabel').textContent =
+    `${p.current}/${p.total} · Verificando ${p.name}`;
+});
+$('resultReport').onclick = () => lastResult && showReport(lastResult);
+$('historyButton').onclick = showHistory;
+$('downloadsButton').onclick = () => api.openDownloads();
+$('updateButton').onclick = async () => {
+  const body = openModal('Actualizar PhotoBatch');
+  const version = document.querySelector('.version').textContent,
+    installed = el('p', '', `Versión instalada: ${version}`),
+    available = el('p', 'muted', 'Versión disponible: todavía no consultada.'),
+    status = el('p', 'micro', '');
+  const field = el('input');
+  field.type = 'url';
+  field.setAttribute('aria-label', 'Dirección del canal');
+  field.placeholder = 'https://github.com/.../latest.json';
+  field.value = await api.getUpdateChannel().catch(() => '');
+  const label = el('label', '', 'Canal de actualizaciones');
+  label.append(field);
+  const search = el('button', 'secondary', 'Buscar actualizaciones'),
+    save = el('button', 'secondary', 'Guardar canal'),
+    install = el('button', 'primary', 'Descargar e instalar'),
+    local = el('button', 'quiet', 'Instalar ZIP local');
+  install.disabled = true;
+  let info = null;
+  search.onclick = async () => {
+    search.disabled = true;
+    status.textContent = 'Consultando GitHub…';
+    try {
+      info = await api.checkUpdate();
+      available.textContent = `Versión disponible: ${info.available}`;
+      install.disabled = !info.patch;
+      status.textContent = info.upToDate
+        ? 'Ya tenés la última versión.'
+        : info.unsupported
+          ? 'Hay una versión nueva, pero no hay parche compatible con esta instalación.'
+          : `Parche compatible: ${info.installed} → ${info.available}.`;
+    } catch (e) {
+      status.textContent = e.message;
+    } finally {
+      search.disabled = false;
+    }
+  };
+  save.onclick = async () => {
+    try {
+      field.value = await api.setUpdateChannel(field.value);
+      info = null;
+      install.disabled = true;
+      available.textContent = 'Versión disponible: todavía no consultada.';
+      status.textContent = 'Canal guardado. Tocá Buscar actualizaciones.';
+    } catch (e) {
+      status.textContent = e.message;
+    }
+  };
+  install.onclick = async () => {
+    install.disabled = true;
+    status.textContent = 'Descargando y verificando el parche…';
+    try {
+      const r = await api.installOnlineUpdate();
+      status.textContent = r?.canceled
+        ? 'Instalación cancelada.'
+        : 'Cerrando para instalar…';
+    } catch (e) {
+      status.textContent = e.message;
+      install.disabled = false;
+    }
+  };
+  local.onclick = async () => {
+    try {
+      const r = await api.update();
+      status.textContent = r?.canceled
+        ? 'Selección cancelada.'
+        : 'Cerrando para instalar el ZIP…';
+    } catch (e) {
+      status.textContent = e.message;
+    }
+  };
+  body.append(installed, available, label, status);
+  $('modalActions').append(search, save, install, local);
+};
+$('closeModal').onclick = () => $('modal').close();
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => e.preventDefault());
+document.addEventListener('paste', (e) => {
+  if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  const files = [...e.clipboardData.files];
+  if (files.length) {
+    e.preventDefault();
+    if (operationPending() || $('modal').open) return;
+    if (mode === 'video') addVideoFiles(files, videoSlots.indexOf(null));
+    else addFiles(files, slots[selected] ? slots.indexOf(null) : selected);
+  }
+});
+(async () => {
+  try {
+    const state = await api.init();
+    if (state.error) {
+      disabled = true;
+      notice('No se pudo abrir el historial: ' + state.error);
+    } else {
+      updateHistory(state.history);
+      if (state.history.last) {
+        $('start').value = state.history.highWater + 1;
+        $('date').value = state.history.last.date;
+        $('from').value = state.history.last.from;
+        $('to').value = state.history.last.to;
+        $('zone').value = state.history.last.zone;
+      }
+    }
+    document.querySelector('.version').textContent = state.version;
+    for (const [v, p] of [
+      ['videoDate', 'date'],
+      ['videoFrom', 'from'],
+      ['videoTo', 'to'],
+      ['videoZone', 'zone']
+    ])
+      $(v).value = $(p).value;
+  } catch (e) {
+    disabled = true;
+    notice(e.message);
+  }
+  render();
+})();
 
-function videoNotice(text,success=false){$('videoNotice').hidden=!text;$('videoNotice').textContent=text||'';$('videoNotice').classList.toggle('success',success);}
-function setMode(next){mode=next;const photo=next==='photo';$('photoView').hidden=$('photoConfig').hidden=!photo;$('videoView').hidden=$('videoConfig').hidden=photo;$('photoMode').classList.toggle('active',photo);$('videoMode').classList.toggle('active',!photo);$('photoMode').setAttribute('aria-pressed',String(photo));$('videoMode').setAttribute('aria-pressed',String(!photo));controls();}
-$('photoMode').onclick=()=>setMode('photo');$('videoMode').onclick=()=>setMode('video');
-function renderVideos(){const root=$('videoSlots');root.replaceChildren();videoSlots.forEach((video,index)=>{const card=el('div','slot'+(video?' filled':''));card.dataset.index=index;card.tabIndex=0;card.setAttribute('aria-label',video?`Video ${index+1}: ${video.name}`:`Espacio ${index+1}: agregar video`);
- card.onclick=()=>{if(!video&&!videoBusy)pickVideos();};card.onkeydown=e=>{if(e.key==='Enter'&&!video){e.preventDefault();pickVideos();}};
- card.ondragover=e=>{e.preventDefault();if(!videoBusy)card.classList.add('over');};card.ondragleave=()=>card.classList.remove('over');card.ondrop=async e=>{e.preventDefault();e.stopPropagation();card.classList.remove('over');if(videoBusy||videoLoading)return;if(videoDragged!==null){const from=videoDragged;videoDragged=null;[videoSlots[from],videoSlots[index]]=[videoSlots[index],videoSlots[from]];renderVideos();return;}await addVideoFiles([...e.dataTransfer.files],index);};
- if(video){card.draggable=!videoBusy;card.ondragstart=e=>{videoDragged=index;e.dataTransfer.setData('text/plain','PhotoBatch-video:'+index);e.dataTransfer.effectAllowed='move';};card.ondragend=()=>videoDragged=null;
-  if(video.preview){const img=el('img','photo');img.src=video.preview;img.alt=video.name;img.draggable=false;card.append(img);}else card.append(el('div','video-placeholder','▶'));
-  card.append(el('span','slot-badge',String(index+1).padStart(2,'0')));const remove=el('button','remove','×');remove.title='Quitar video';remove.disabled=videoBusy;remove.onclick=async e=>{e.stopPropagation();await api.forgetVideos([video.id]);videoSlots[index]=null;$('videoResult').hidden=true;renderVideos();};card.append(remove);const label=el('div','photo-name',video.name);label.title=video.name;const ordinal=videoSlots.slice(0,index+1).filter(Boolean).length-1,exported=`clip_${videoSequence[ordinal]}${video.name.match(/\.[^.]+$/)?.[0]?.toLowerCase()||'.mp4'}`;card.append(label,el('div','photo-time',`→ ${exported} · ${(video.size/1024/1024).toFixed(1)} MB`));}
- else card.append(el('div','empty-plus','+'),el('div','empty-label',`VIDEO ${String(index+1).padStart(2,'0')}`),el('div','empty-help','Arrastrá o elegí'));
- root.append(card);});$('videoCount').textContent=`${videoSlots.filter(Boolean).length} / 10`;controls();}
-async function acceptVideos(result,start){if(!result)return;videoSequence=result.sequence;let index=start;for(const v of result.accepted){while(index<10&&videoSlots[index])index++;if(index>=10){await api.forgetVideos([v.id]);continue;}videoSlots[index++]=v;}if(result.skipped)videoNotice(`Solo se cargaron 10 videos; ${result.skipped} quedaron afuera.`);else videoNotice('');$('videoResult').hidden=true;renderVideos();}
-async function pickVideos(){if(videoBusy||videoLoading)return;videoLoading=true;controls();try{await acceptVideos(await api.pickVideos(),videoSlots.indexOf(null));}catch(e){videoNotice(e.message);}finally{videoLoading=false;controls();}}
-async function addVideoFiles(files,start){if(!files.length){videoNotice('Arrastrá archivos de video desde el Explorador.');return;}videoLoading=true;controls();try{await acceptVideos(await api.addVideoFiles(files),start);}catch(e){videoNotice(e.message);}finally{videoLoading=false;controls();}}
-videoFormIds.forEach(id=>$(id).addEventListener('input',()=>{$('videoResult').hidden=true;controls();}));
-$('videoPick').onclick=pickVideos;
-$('videoClear').onclick=async()=>{await api.forgetVideos(videoSlots.filter(Boolean).map(x=>x.id));videoSlots=Array(10).fill(null);videoSequence=[];videoNotice('');$('videoResult').hidden=true;renderVideos();};
-$('videoDownloads').onclick=()=>api.openDownloads();
-$('videoClean').onclick=async()=>{const list=videoSlots.filter(Boolean);if(videoBusy||!list.length)return;videoBusy=true;controls();videoNotice('');$('videoProgress').hidden=false;$('videoStatus').textContent='Limpiando y verificando…';try{const result=await api.cleanVideos(list.map(v=>v.id),$('videoZipName').value,{date:$('videoDate').value,from:$('videoFrom').value,to:$('videoTo').value,zone:$('videoZone').value});$('videoResultName').textContent=result.zipName;$('videoResultDetail').textContent=`${result.items.length} videos verificados · ${result.items[0].date.split('-').reverse().join('/')} · ${result.items[0].time} — ${result.items.at(-1).time} (${result.items[0].offset}) · originales intactos`;$('videoResult').hidden=false;$('videoStatus').textContent='ZIP guardado en Descargas.';videoNotice('');videoSequence=result.sequence;renderVideos();}catch(e){$('videoStatus').textContent='No se guardó el ZIP.';videoNotice(e.message);}finally{videoBusy=false;$('videoProgress').hidden=true;controls();}};
-api.onVideoProgress(p=>{if(!videoBusy)return;const number=Math.min(p.current+1,p.total);$('videoProgress').querySelector('progress').max=p.total;$('videoProgress').querySelector('progress').value=p.current;$('videoProgressLabel').textContent=`${number}/${p.total} · ${p.name}`;$('videoStatus').textContent=`${number}/${p.total} · ${p.name}`;});
-document.addEventListener('drop',e=>{if(mode==='video'&&!e.target.closest('#videoSlots')){e.preventDefault();addVideoFiles([...e.dataTransfer.files],videoSlots.indexOf(null));}},true);
+function videoNotice(text, success = false) {
+  $('videoNotice').hidden = !text;
+  $('videoNotice').textContent = text || '';
+  $('videoNotice').classList.toggle('success', success);
+}
+function setMode(next) {
+  if (operationPending()) return;
+  mode = next;
+  const photo = next === 'photo';
+  $('photoView').hidden = $('photoConfig').hidden = !photo;
+  $('videoView').hidden = $('videoConfig').hidden = photo;
+  $('photoMode').classList.toggle('active', photo);
+  $('videoMode').classList.toggle('active', !photo);
+  $('photoMode').setAttribute('aria-pressed', String(photo));
+  $('videoMode').setAttribute('aria-pressed', String(!photo));
+  controls();
+}
+$('photoMode').onclick = () => setMode('photo');
+$('videoMode').onclick = () => setMode('video');
+function renderVideos() {
+  const root = $('videoSlots');
+  root.replaceChildren();
+  videoSlots.forEach((video, index) => {
+    const card = el('div', 'slot' + (video ? ' filled' : ''));
+    card.dataset.index = index;
+    card.tabIndex = 0;
+    card.setAttribute(
+      'aria-label',
+      video
+        ? `Video ${index + 1}: ${video.name}`
+        : `Espacio ${index + 1}: agregar video`
+    );
+    card.onclick = () => {
+      if (!video && !operationPending()) pickVideos();
+    };
+    card.onkeydown = (e) => {
+      if (operationPending()) return;
+      if (e.key === 'Enter' && !video) {
+        e.preventDefault();
+        pickVideos();
+      }
+    };
+    card.ondragover = (e) => {
+      e.preventDefault();
+      if (!operationPending()) card.classList.add('over');
+    };
+    card.ondragleave = () => card.classList.remove('over');
+    card.ondrop = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      card.classList.remove('over');
+      if (operationPending()) return;
+      if (videoDragged !== null) {
+        const from = videoDragged;
+        videoDragged = null;
+        [videoSlots[from], videoSlots[index]] = [
+          videoSlots[index],
+          videoSlots[from]
+        ];
+        $('videoResult').hidden = true;
+        renderVideos();
+        return;
+      }
+      await addVideoFiles([...e.dataTransfer.files], index);
+    };
+    if (video) {
+      card.draggable = !videoBusy;
+      card.ondragstart = (e) => {
+        if (operationPending()) {
+          e.preventDefault();
+          return;
+        }
+        videoDragged = index;
+        e.dataTransfer.setData('text/plain', 'PhotoBatch-video:' + index);
+        e.dataTransfer.effectAllowed = 'move';
+      };
+      card.ondragend = () => (videoDragged = null);
+      if (video.preview) {
+        const img = el('img', 'photo');
+        img.src = video.preview;
+        img.alt = video.name;
+        img.draggable = false;
+        card.append(img);
+      } else card.append(el('div', 'video-placeholder', '▶'));
+      card.append(el('span', 'slot-badge', String(index + 1).padStart(2, '0')));
+      const remove = el('button', 'remove', '×');
+      remove.title = 'Quitar video';
+      remove.setAttribute('aria-label', `Quitar ${video.name}`);
+      remove.disabled = videoBusy;
+      remove.onclick = async (e) => {
+        e.stopPropagation();
+        if (operationPending()) return;
+        videoLoading = true;
+        controls();
+        try {
+          await api.forgetVideos([video.id]);
+          videoSlots[index] = null;
+          $('videoResult').hidden = true;
+          renderVideos();
+        } catch (error) {
+          videoNotice(error.message);
+        } finally {
+          videoLoading = false;
+          controls();
+        }
+      };
+      card.append(remove);
+      const label = el('div', 'photo-name', video.name);
+      label.title = video.name;
+      const ordinal = videoSlots.slice(0, index + 1).filter(Boolean).length - 1,
+        exported = `clip_${videoSequence[ordinal]}${video.name.match(/\.[^.]+$/)?.[0]?.toLowerCase() || '.mp4'}`;
+      card.append(
+        label,
+        el(
+          'div',
+          'photo-time',
+          `→ ${exported} · ${(video.size / 1024 / 1024).toFixed(1)} MB`
+        )
+      );
+    } else
+      card.append(
+        el('div', 'empty-plus', '+'),
+        el('div', 'empty-label', `VIDEO ${String(index + 1).padStart(2, '0')}`),
+        el('div', 'empty-help', 'Arrastrá o elegí')
+      );
+    root.append(card);
+  });
+  $('videoCount').textContent = `${videoSlots.filter(Boolean).length} / 10`;
+  controls();
+}
+async function acceptVideos(result, start) {
+  if (!result) return;
+  videoSequence = result.sequence;
+  let index = start < 0 ? videoSlots.indexOf(null) : start;
+  for (const video of result.accepted) {
+    while (index < 10 && videoSlots[index]) index++;
+    if (index >= 10) index = videoSlots.indexOf(null);
+    if (index < 0) {
+      await api.forgetVideos([video.id]);
+      continue;
+    }
+    videoSlots[index++] = video;
+  }
+  if (result.skipped)
+    videoNotice(
+      `Solo se cargaron 10 videos; ${result.skipped} quedaron afuera.`
+    );
+  else videoNotice('');
+  $('videoResult').hidden = true;
+  renderVideos();
+}
+async function pickVideos() {
+  if (operationPending()) return;
+  videoLoading = true;
+  controls();
+  try {
+    await acceptVideos(await api.pickVideos(), videoSlots.indexOf(null));
+  } catch (e) {
+    videoNotice(e.message);
+  } finally {
+    videoLoading = false;
+    controls();
+  }
+}
+async function addVideoFiles(files, start) {
+  if (operationPending()) return;
+  if (!files.length) {
+    videoNotice('Arrastrá archivos de video desde el Explorador.');
+    return;
+  }
+  videoLoading = true;
+  controls();
+  try {
+    await acceptVideos(await api.addVideoFiles(files), start);
+  } catch (e) {
+    videoNotice(e.message);
+  } finally {
+    videoLoading = false;
+    controls();
+  }
+}
+videoFormIds.forEach((id) =>
+  $(id).addEventListener('input', () => {
+    $('videoResult').hidden = true;
+    controls();
+  })
+);
+$('videoPick').onclick = pickVideos;
+$('videoClear').onclick = async () => {
+  if (operationPending()) return;
+  videoLoading = true;
+  controls();
+  try {
+    await api.forgetVideos(videoSlots.filter(Boolean).map((video) => video.id));
+    videoSlots = Array(10).fill(null);
+    videoSequence = [];
+    videoNotice('');
+    $('videoResult').hidden = true;
+    renderVideos();
+  } catch (error) {
+    videoNotice(error.message);
+  } finally {
+    videoLoading = false;
+    controls();
+  }
+};
+$('videoDownloads').onclick = () => api.openDownloads();
+$('videoClean').onclick = async () => {
+  const list = videoSlots.filter(Boolean);
+  if (operationPending() || !list.length) return;
+  videoBusy = true;
+  controls();
+  videoNotice('');
+  $('videoProgress').hidden = false;
+  $('videoStatus').textContent = 'Limpiando y verificando…';
+  try {
+    const result = await api.cleanVideos(
+      list.map((v) => v.id),
+      $('videoZipName').value,
+      {
+        date: $('videoDate').value,
+        from: $('videoFrom').value,
+        to: $('videoTo').value,
+        zone: $('videoZone').value
+      }
+    );
+    $('videoResultName').textContent = result.zipName;
+    $('videoResultDetail').textContent =
+      `${result.items.length} videos verificados · ${result.items[0].date.split('-').reverse().join('/')} · ${result.items[0].time} — ${result.items.at(-1).time} (${result.items[0].offset}) · originales intactos`;
+    $('videoResult').hidden = false;
+    $('videoStatus').textContent = 'ZIP guardado en Descargas.';
+    videoNotice('');
+    videoSequence = result.sequence;
+    renderVideos();
+  } catch (e) {
+    $('videoStatus').textContent = 'No se guardó el ZIP.';
+    videoNotice(e.message);
+  } finally {
+    videoBusy = false;
+    $('videoProgress').hidden = true;
+    controls();
+  }
+};
+api.onVideoProgress((p) => {
+  if (!videoBusy) return;
+  const number = Math.min(p.current + 1, p.total);
+  $('videoProgress').querySelector('progress').max = p.total;
+  $('videoProgress').querySelector('progress').value = p.current;
+  $('videoProgressLabel').textContent = `${number}/${p.total} · ${p.name}`;
+  $('videoStatus').textContent = `${number}/${p.total} · ${p.name}`;
+});
+document.addEventListener(
+  'drop',
+  (e) => {
+    if (
+      mode === 'video' &&
+      videoDragged === null &&
+      !operationPending() &&
+      !$('modal').open &&
+      !e.target.closest('#videoSlots')
+    ) {
+      e.preventDefault();
+      addVideoFiles([...e.dataTransfer.files], videoSlots.indexOf(null));
+    }
+  },
+  true
+);
 renderVideos();

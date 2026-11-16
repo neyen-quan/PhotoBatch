@@ -1,10 +1,11 @@
 'use strict';
-const {app,BrowserWindow,ipcMain,dialog,shell,nativeImage,protocol,net,session,screen}=require('electron');
+const {app,BrowserWindow,ipcMain,dialog,shell,nativeImage,protocol,net,session,screen,nativeTheme}=require('electron');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),{pathToFileURL}=require('node:url');
 const {BatchService}=require('./service'),{readMetadata}=require('./metadata'),{startUpdate}=require('./updater');
 const channel=require('./update-channel');
 const {VideoService}=require('./video');
 
+nativeTheme.themeSource='dark';
 app.setName('PhotoBatch');app.commandLine.appendSwitch('lang','es-AR');
 app.setPath('userData',process.env.PHOTOBATCH_TEST_ROOT?path.join(process.env.PHOTOBATCH_TEST_ROOT,'userdata'):path.join(app.getPath('appData'),'PhotoBatch'));
 protocol.registerSchemesAsPrivileged([{scheme:'photobatch',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
@@ -21,7 +22,7 @@ function startupWindowBounds(displays,primary){
   x:area.x+Math.floor((area.width-width)/2),y:area.y+Math.floor((area.height-height)/2)};
 }
 app.whenReady().then(async()=>{
- protocol.handle('photobatch',request=>{const u=new URL(request.url),name=u.pathname.slice(1);if(u.host!=='app'||!['index.html','style.css','renderer.js'].includes(name))return new Response('Not found',{status:404});return net.fetch(pathToFileURL(path.join(__dirname,name)).href);});
+ protocol.handle('photobatch',request=>{const u=new URL(request.url),name=u.pathname.slice(1);if(u.host!=='app'||!['index.html','style.css','renderer.js','icon.png'].includes(name))return new Response('Not found',{status:404});return net.fetch(pathToFileURL(path.join(__dirname,name)).href);});
  session.defaultSession.setPermissionRequestHandler((_w,_p,cb)=>cb(false));session.defaultSession.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*','ws://*/*','wss://*/*']},(_d,cb)=>cb({cancel:true}));
  tempRoot=fs.mkdtempSync(path.join(os.tmpdir(),'PhotoBatch-'));let startupError=null;
  try{service=new BatchService({stateDir:path.join(app.getPath('userData'),'history'),tempDir:tempRoot,downloads:process.env.PHOTOBATCH_TEST_ROOT?path.join(process.env.PHOTOBATCH_TEST_ROOT,'Downloads'):app.getPath('downloads'),onProgress:p=>win?.webContents.send('progress',p)});service.history.summary();}catch(e){startupError=e.message;}
@@ -44,7 +45,7 @@ app.whenReady().then(async()=>{
  handle('metadata',id=>{const s=service.sources.get(id);if(!s)throw Error('Imagen no disponible.');return readMetadata(s.path);});
  handle('openDownloads',()=>shell.openPath(service.downloads));handle('backup',()=>service.backup());
  handle('restore',async()=>{if(service.busy)throw Error('Esperá a que termine la exportación.');const r=await dialog.showOpenDialog(win,{title:'Restaurar historial',properties:['openFile'],filters:[{name:'Respaldo PhotoBatch',extensions:['json']}]});if(r.canceled)return null;const f=r.filePaths[0];if(fs.statSync(f).size>50*1024*1024)throw Error('Respaldo demasiado grande.');const count=service.history.restore(fs.readFileSync(f,'utf8'));service.plan=null;return {count,history:service.history.summary()};});
- win=new BrowserWindow({...startupWindowBounds(screen.getAllDisplays(),screen.getPrimaryDisplay()),title:'PhotoBatch',icon:path.join(__dirname,'icon.png'),backgroundColor:'#0b1010',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
+ win=new BrowserWindow({...startupWindowBounds(screen.getAllDisplays(),screen.getPrimaryDisplay()),title:'PhotoBatch',icon:path.join(__dirname,'icon.png'),backgroundColor:'#101213',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
  win.removeMenu();win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());win.on('close',e=>{if(service?.busy||videoService?.busy){e.preventDefault();dialog.showMessageBox(win,{type:'info',message:'Esperá a que termine la exportación.',detail:'Estamos verificando las imágenes y guardando el ZIP.'});}});
  await win.loadURL('photobatch://app/index.html');
 });
