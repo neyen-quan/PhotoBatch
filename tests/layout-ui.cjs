@@ -4,8 +4,8 @@ const {_electron:electron}=require('playwright'),path=require('node:path'),fs=re
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'pb-layout-'));let app;const errors=[];
  try{
   app=await electron.launch({args:[path.resolve('.')],env:{...process.env,PHOTOBATCH_TEST_ROOT:root}});
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setMinimumSize(0,0));
   const page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.waitForSelector('#slots .slot');
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setMinimumSize(0,0));
   assert.equal(await page.locator('.logo').evaluate(image=>image.complete&&image.naturalWidth>0),true,'brand asset loads through app protocol');
   assert.equal(await page.locator('#copyButton,.copy-panel').count(),0);
   assert.equal(await page.evaluate(()=>typeof window.photoBatch.createCopy),'undefined');
