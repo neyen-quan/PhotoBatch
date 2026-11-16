@@ -75,8 +75,12 @@ class Cloud {
     if (!fs.existsSync(this.file)) return;
     try {
       if (!await this.canRemember()) throw Error('El sistema no pudo desbloquear la sesión.');
-      const saved = JSON.parse(await this.storage.decryptStringAsync(fs.readFileSync(this.file)));
+      const decrypted = await this.storage.decryptStringAsync(fs.readFileSync(this.file));
+      const saved = JSON.parse(decrypted.result);
       if (typeof saved.refresh_token !== 'string' || !saved.user?.id) throw Error('Sesión inválida.');
+      if (decrypted.shouldReEncrypt) {
+        atomicWrite(this.file, await this.storage.encryptStringAsync(decrypted.result));
+      }
       this.session = saved;
       this.remembered = true;
     } catch { this.message = 'Volvé a iniciar sesión en este equipo. La numeración sigue en tu cuenta.'; }

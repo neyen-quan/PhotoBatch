@@ -8,7 +8,7 @@ const {fakeCloud}=require('./fake-cloud.cjs');
 const key=crypto.randomBytes(32);
 const storage={isAsyncEncryptionAvailable:async()=>true,getSelectedStorageBackend:()=> 'test',
   encryptStringAsync:async text=>{const iv=crypto.randomBytes(16),c=crypto.createCipheriv('aes-256-cbc',key,iv);return Buffer.concat([iv,c.update(text),c.final()]);},
-  decryptStringAsync:async bytes=>{const d=crypto.createDecipheriv('aes-256-cbc',key,bytes.subarray(0,16));return Buffer.concat([d.update(bytes.subarray(16)),d.final()]).toString();}};
+  decryptStringAsync:async bytes=>{const d=crypto.createDecipheriv('aes-256-cbc',key,bytes.subarray(0,16));return {result:Buffer.concat([d.update(bytes.subarray(16)),d.final()]).toString(),shouldReEncrypt:false};}};
 function setup(t,backend=fakeCloud(),local={photo:-1,video:14098}) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pb-cloud-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const cloud=new Cloud({stateDir:dir,secureStorage:storage,localCounters:()=>local});cloud.request=backend.request;
