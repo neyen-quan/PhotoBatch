@@ -2,6 +2,60 @@
 
 Aplicación local para organizar tandas de fotos y limpiar etiquetas editables de videos. Electron 44, Node 24, ExifTool y fflate.
 
+## Cuenta y numeración compartida (1.4.0)
+
+Actualizá desde **Actualizar programa → Buscar actualizaciones → Descargar e instalar**.
+En **Iniciar sesión → Crear cuenta**, usá el correo con el que administrás el proyecto
+Supabase PhotoBatch y una contraseña propia de PhotoBatch (mínimo 10 caracteres).
+El servicio de correo predeterminado de Supabase solo envía a miembros del proyecto;
+para otros usuarios hay que configurar SMTP. No hay credenciales de administrador en la app.
+
+En el correo de confirmación, copiá el enlace del botón y pegalo en **Confirmar correo
+o recuperar contraseña → Enlace del correo → Confirmar enlace** dentro de PhotoBatch.
+Si ya abriste el enlace y confirmaste el correo, ingresá con tu contraseña. La misma
+pantalla permite solicitar recuperación y verificar el enlace con una contraseña nueva.
+La cuenta de la aplicación es independiente del acceso al panel de Supabase.
+
+Al ingresar o volver a abrir, la app incorpora el mayor entre su historial de fotos,
+su contador local de videos y los valores de la cuenta. En **Mi cuenta** podés indicar
+el próximo inicio (por ejemplo, 1700) y sincronizar manualmente. Solo se admite avanzar.
+En otro equipo, actualizá antes de trabajar e ingresá con **la misma cuenta**; se
+incorpora automáticamente su numeración local si es mayor. Las versiones anteriores
+a 1.4.0 siguen usando contadores locales y no deben usarse para exportar en paralelo.
+
+Fotos consume el rango completo seleccionado (1700 + 100 reserva hasta 1799, aunque
+solo exportes algunas fotos). Videos conserva su contador `clip_…` separado. Los
+nombres de video mostrados antes de exportar son estimados y se confirman al guardar.
+Se requiere Internet para reservar la numeración antes de publicar cada ZIP. Si otro
+equipo ganó ese rango, la exportación se rechaza y se solicita sincronizar. Un corte
+después de reservar puede dejar números sin usar: se conservan reservados para evitar
+duplicados. Recuperar la PC después no puede detectar ni corregir duplicados creados
+previamente por versiones locales sin conocer su historial.
+
+Solo se suben contadores y reservas numéricas vinculados al usuario. Fotos, videos,
+rutas, nombres y comprobaciones detalladas quedan en cada equipo. La sesión se cifra
+con el almacenamiento seguro del sistema (Windows DPAPI); nunca se guarda la contraseña.
+Si no hay almacenamiento seguro, la sesión dura hasta cerrar y la app lo informa.
+Cerrar sesión solo desconecta ese equipo. El respaldo de Historial sigue conteniendo
+los comprobantes locales de fotos; no incluye archivos ni credenciales.
+
+Backend exclusivo: `rkuaogjbzuwxprkaxugd` (sin dependencias de Calendario Rina).
+`supabase/schema.sql` corresponde a la migración aplicada `shared_counters_v1`.
+Los clientes tienen SELECT bajo RLS; las escrituras se hacen por RPC, con propietario
+obtenido de `auth.uid()`, límites, bloqueo de fila e idempotencia por solicitud.
+El proceso principal hace las solicitudes HTTPS; el renderer no recibe tokens ni
+tiene acceso de red. Se conserva el formato de historial existente.
+
+Verificación: `npm test` incluye fallos de conexión, sesiones, dos equipos, reintentos,
+y exportaciones reales que no publican ZIP si la nube rechaza la reserva.
+`node tests/layout-ui.cjs` usa un transporte simulado instalado únicamente por
+`tests/launch-ui.cjs` (no se distribuye); comprueba login, avance, logout, sincronización,
+exportación y diseño. En Windows también comprueba restauración de la sesión cifrada.
+`tests/cloud-database.sql` ejecuta los cuerpos desplegados sobre tablas temporales
+sin tocar cuentas de Auth ni datos de trabajo, y revierte todo al terminar.
+La entrega de correo y el primer inicio con una cuenta real requieren la confirmación
+del titular; no se simula que ese paso personal ya esté realizado.
+
 ## Desarrollo
 
 - `npm ci`

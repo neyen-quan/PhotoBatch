@@ -2,6 +2,7 @@
 const {contextBridge,ipcRenderer,webUtils}=require('electron');
 const invoke=(channel,...args)=>ipcRenderer.invoke(channel,...args).then(r=>{if(!r.ok)throw Error(r.error);return r.value;});
 contextBridge.exposeInMainWorld('photoBatch',{
+ accountStatus:()=>invoke('accountStatus'),accountAction:(action,data)=>invoke('accountAction',action,data),onCloudState:callback=>{const f=(_e,s)=>callback(s);ipcRenderer.on('cloudState',f);return ()=>ipcRenderer.removeListener('cloudState',f);},
  init:()=>invoke('init'),pick:()=>invoke('pick'),importPath:p=>invoke('import',p),
  pickVideos:()=>invoke('pickVideos'),addVideoFiles:files=>invoke('addVideos',files.map(f=>webUtils.getPathForFile(f)).filter(Boolean)),forgetVideos:ids=>invoke('forgetVideos',ids),cleanVideos:(ids,name,config)=>invoke('cleanVideos',ids,name,config),onVideoProgress:callback=>{const f=(_e,p)=>callback(p);ipcRenderer.on('videoProgress',f);return ()=>ipcRenderer.removeListener('videoProgress',f);},
  importFile:file=>{const p=webUtils.getPathForFile(file);return p?invoke('import',p):file.arrayBuffer().then(bytes=>invoke('importBytes',{name:file.name,bytes:new Uint8Array(bytes)}));},

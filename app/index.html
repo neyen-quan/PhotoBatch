@@ -11,10 +11,11 @@
   <header>
     <div class="brand">
       <img class="logo" src="icon.png" alt="" width="36" height="36">
-      <strong>PhotoBatch <span class="version">1.3.0</span></strong>
+      <strong>PhotoBatch <span class="version">1.4.0</span></strong>
     </div>
     <div class="header-right">
-      <span class="local"><i></i>Todo en tu equipo</span>
+      <span id="cloudLabel" class="local">Cuenta sin vincular</span>
+      <button id="accountButton" class="quiet">Iniciar sesión</button>
       <button id="historyButton" class="quiet">Historial <span aria-hidden="true">→</span></button>
       <button id="updateButton" class="quiet">Actualizar programa <span aria-hidden="true">↥</span></button>
     </div>
@@ -23,7 +24,7 @@
   <main>
     <section class="history-strip" aria-label="Última exportación">
       <div>
-        <span class="eyebrow">Último rango exportado</span>
+        <span class="eyebrow">Último rango en este equipo</span>
         <strong id="lastRange">Todavía no hay tandas</strong>
         <small id="lastUsed">Tu historial se guarda automáticamente.</small>
       </div>
@@ -144,7 +145,7 @@
 
         <div id="videoConfig" hidden>
           <h2>Preparar exportación</h2>
-          <p class="micro video-summary">Nombres clip_… en orden ascendente, metadatos limpios y la fecha que elijas.</p>
+          <p class="micro video-summary">Nombres clip_… ascendentes. La numeración se confirma en la nube al guardar.</p>
           <div class="quality video-quality"><span aria-hidden="true">✓</span><p>Calidad original<small>Sin recomprimir video ni audio</small></p></div>
           <div class="config-block date-config">
             <label>Fecha de la tanda<input id="videoDate" type="date" min="1980-01-01" max="2099-12-31"></label>
@@ -186,5 +187,6 @@
     <div id="modalActions"></div>
   </dialog>
   <script src="renderer.js"></script>
+  <script src="account-ui.js"></script>
 </body>
 </html>

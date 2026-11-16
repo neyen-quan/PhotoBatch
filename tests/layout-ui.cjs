@@ -3,12 +3,28 @@ const {_electron:electron}=require('playwright'),path=require('node:path'),fs=re
 (async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'pb-layout-'));let app;const errors=[];
  try{
-  app=await electron.launch({args:[path.resolve('.')],env:{...process.env,PHOTOBATCH_TEST_ROOT:root}});
+  app=await electron.launch({args:[path.resolve('tests/launch-ui.cjs')],env:{...process.env,PHOTOBATCH_TEST_ROOT:root}});
   const page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.waitForSelector('#slots .slot');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setMinimumSize(0,0));
   assert.equal(await page.locator('.logo').evaluate(image=>image.complete&&image.naturalWidth>0),true,'brand asset loads through app protocol');
   assert.equal(await page.locator('#copyButton,.copy-panel').count(),0);
   assert.equal(await page.evaluate(()=>typeof window.photoBatch.createCopy),'undefined');
+  assert.equal(await page.locator('#exportButton').isEnabled(),false);
+  await page.locator('#accountButton').click();
+  fs.mkdirSync('tests/layout-shots',{recursive:true});
+  await page.screenshot({path:'tests/layout-shots/login.png'});
+  await page.locator('#accountEmail').fill('notebook@example.test');
+  await page.locator('#accountPassword').fill('test-password-123');
+  await page.locator('#accountLogin').click();
+  await page.waitForSelector('#accountSync');
+  assert.match(await page.locator('#modalBody').textContent(),/notebook@example.test/);
+  await page.locator('#accountPhoto').fill('1700');
+  page.once('dialog',dialog=>dialog.accept());
+  await page.locator('#accountAdvance').click();
+  await page.waitForFunction(()=>document.querySelector('.account-message')?.textContent.includes('guardados'));
+  assert.equal(await page.locator('#accountPhoto').inputValue(),'1700');
+  await page.screenshot({path:'tests/layout-shots/account.png'});
+  await page.keyboard.press('Escape');
   for(let i=0;i<10;i++)await page.evaluate(async file=>{const p=await window.photoBatch.importPath(file);slots[slots.indexOf(null)]={...p,camera:'back'};render();},path.resolve('tests/fixtures/normal.jpg'));
   await require('./renderer-ui.cjs')(page);
   await page.locator('#previewButton').click();await page.waitForFunction(()=>!document.getElementById('exportButton').disabled);
@@ -44,6 +60,30 @@ const {_electron:electron}=require('playwright'),path=require('node:path'),fs=re
   await page.waitForFunction(()=>document.querySelectorAll('#videoSlots .filled').length===0);
   await page.evaluate(()=>{videoSequence=Array.from({length:10},(_,i)=>14099+i*3);videoSlots=videoSequence.map((n,i)=>({id:String(i),name:'original-'+i+'.mp4',size:1024}));renderVideos();});
   for(const [w,h] of [[1360,920],[1200,800],[1020,710]])await verify('video',w,h);
-  await verify('video',1360,920);await page.screenshot({path:'tests/layout-shots/videos.png'});assert.deepEqual(errors,[]);console.log('LAYOUT PASS: photo preview, export, video, no scrolling, no AI IPC.');
+  await verify('video',1360,920);await page.screenshot({path:'tests/layout-shots/videos.png'});
+  await app.evaluate(()=>{globalThis.pbCloudBackend.counters.photo=2499;});
+  await page.locator('#accountButton').click();
+  await page.locator('#accountSync').click();
+  await page.waitForFunction(()=>document.getElementById('accountPhoto')?.value==='2500');
+  await page.locator('#accountLogout').click();
+  await page.waitForSelector('#accountLogin');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#videoClean').isEnabled(),false);
+  await assert.rejects(page.evaluate(()=>window.photoBatch.preview({start:2500,size:100},[])),/Iniciá sesión/);
+  await page.locator('#accountButton').click();
+  await page.locator('#accountEmail').fill('notebook@example.test');
+  await page.locator('#accountPassword').fill('test-password-123');
+  await page.locator('#accountLogin').click();
+  await page.waitForSelector('#accountSync');
+  assert.equal(await page.locator('#accountPhoto').inputValue(),'2500');
+  if(process.platform==='win32') {
+    assert.equal((await page.evaluate(()=>window.photoBatch.accountStatus())).remembered,true);
+    await app.close();
+    app=await electron.launch({args:[path.resolve('tests/launch-ui.cjs')],env:{...process.env,PHOTOBATCH_TEST_ROOT:root}});
+    const reopened=await app.firstWindow();await reopened.waitForSelector('#slots .slot');
+    const restored=await reopened.evaluate(()=>window.photoBatch.accountStatus());
+    assert.equal(restored.signedIn,true);assert.equal(restored.counters.photo,2499);
+  }
+  assert.deepEqual(errors,[]);console.log('LAYOUT PASS: photo preview, export, video, no scrolling, no AI IPC.');
  }finally{if(app)await app.close();fs.rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 })().catch(e=>{console.error(e);process.exitCode=1});

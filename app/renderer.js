@@ -17,6 +17,7 @@ let videoSlots = Array(10).fill(null),
   videoDragged = null,
   mode = 'photo';
 const videoFormIds = ['videoDate', 'videoFrom', 'videoTo', 'videoZone'];
+let account = {signedIn:false}, accountBusy = false;
 const now = new Date();
 $('date').value =
   `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -38,7 +39,7 @@ function items() {
   return slots.filter(Boolean).map((x) => ({ id: x.id, camera: x.camera }));
 }
 function operationPending() {
-  return busy || loading || videoBusy || videoLoading;
+  return busy || loading || videoBusy || videoLoading || accountBusy;
 }
 function invalidate(cardsChanged = true) {
   const hadPreview = Boolean(plan);
@@ -66,11 +67,11 @@ function controls() {
   $('zipType').disabled = $('zipName').disabled = locked;
   const count = slots.filter(Boolean).length;
   $('count').textContent = `${count} / 10`;
-  $('previewButton').disabled = disabled || locked || !count;
-  $('exportButton').disabled = disabled || locked || !plan;
-  $('updateButton').disabled = $('historyButton').disabled = locked;
+  $('previewButton').disabled = disabled || locked || !count || !account.signedIn;
+  $('exportButton').disabled = disabled || locked || !plan || !account.signedIn;
+  $('accountButton').disabled = $('updateButton').disabled = $('historyButton').disabled = locked;
   $('videoPick').disabled = locked || videoSlots.every(Boolean);
-  $('videoClean').disabled = locked || !videoSlots.some(Boolean);
+  $('videoClean').disabled = disabled || locked || !videoSlots.some(Boolean) || !account.signedIn;
   $('videoClear').disabled = locked || !videoSlots.some(Boolean);
   $('photoMode').disabled = $('videoMode').disabled = locked;
   $('addButton').disabled = disabled || locked || count === 10;
@@ -85,7 +86,7 @@ function controls() {
   $('slots').setAttribute('aria-busy', String(busy || loading));
   $('videoSlots').setAttribute('aria-busy', String(videoBusy || videoLoading));
   document.body.classList.toggle('busy', busy);
-  $('exportHint').textContent = plan
+  $('exportHint').textContent = !account.signedIn ? 'Iniciá sesión para sincronizar la numeración.' : plan
     ? 'Vista previa lista. Se exportarán estos nombres y horarios.'
     : count
       ? 'Generá una vista previa para revisar nombres y horarios.'
@@ -337,11 +338,12 @@ function updateHistory(h) {
       `Última foto: IMG_${String(r.items.at(-1).number).padStart(4, '0')} · ${r.items.length} imágenes`;
     $('lastDate').textContent = r.date.split('-').reverse().join('/');
     $('lastTime').textContent = `${r.from} — ${r.to} · ${r.zone}`;
-    $('nextNumber').textContent = String(h.highWater + 1);
-    $('start').min = String(h.highWater + 1);
+    $('nextNumber').textContent = String(Math.max(h.highWater,account.counters?.photo??-1) + 1);
+    $('start').min = String(Math.max(h.highWater,account.counters?.photo??-1) + 1);
   }
 }
 function openModal(title) {
+  $('modalBody').className = '';
   $('modalTitle').textContent = title;
   $('modalBody').replaceChildren();
   $('modalActions').replaceChildren();
@@ -629,7 +631,7 @@ document.addEventListener('paste', (e) => {
     else addFiles(files, slots[selected] ? slots.indexOf(null) : selected);
   }
 });
-(async () => {
+window.addEventListener('DOMContentLoaded', async () => {
   try {
     const state = await api.init();
     if (state.error) {
@@ -645,6 +647,7 @@ document.addEventListener('paste', (e) => {
         $('zone').value = state.history.last.zone;
       }
     }
+    applyCloudState(state.cloud);
     document.querySelector('.version').textContent = state.version;
     for (const [v, p] of [
       ['videoDate', 'date'],
@@ -658,7 +661,7 @@ document.addEventListener('paste', (e) => {
     notice(e.message);
   }
   render();
-})();
+}, {once:true});
 
 function videoNotice(text, success = false) {
   $('videoNotice').hidden = !text;
@@ -776,7 +779,7 @@ function renderVideos() {
         el(
           'div',
           'photo-time',
-          `→ ${exported} · ${(video.size / 1024 / 1024).toFixed(1)} MB`
+          `≈ ${exported} · ${(video.size / 1024 / 1024).toFixed(1)} MB`
         )
       );
     } else

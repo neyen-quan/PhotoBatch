@@ -1,13 +1,13 @@
 {
   "name": "photobatch",
   "productName": "PhotoBatch",
-  "version": "1.3.0",
-  "description": "Organizador local de tandas de im\u00e1genes",
+  "version": "1.4.0",
+  "description": "Organizador de tandas con numeración sincronizada",
   "main": "app/main.js",
   "type": "commonjs",
   "license": "MIT",
   "scripts": {
-    "test": "node --test tests/core.test.js tests/copy.test.js tests/updater.test.js tests/video.test.js tests/channel.test.js",
+    "test": "node --test tests/core.test.js tests/copy.test.js tests/updater.test.js tests/video.test.js tests/channel.test.js tests/cloud.test.js",
     "start": "electron ."
   },
   "dependencies": {

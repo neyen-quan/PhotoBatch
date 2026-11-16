@@ -73,7 +73,7 @@ async function archive(files, output) {
  }
 }
 class VideoService{
- constructor(downloads,stateDir){this.downloads=downloads;this.sequenceFile=path.join(stateDir,'video-sequence.json');this.files=new Map();this.busy=false;this.sequence=null;}
+ constructor(downloads,stateDir,reserveNumbers=null){this.reserveNumbers=reserveNumbers;this.downloads=downloads;this.sequenceFile=path.join(stateDir,'video-sequence.json');this.files=new Map();this.busy=false;this.sequence=null;}
  async add(paths, thumbnail) {
   if (this.busy) throw Error('Esperá a que termine la operación actual.');
   if (!Array.isArray(paths) || !paths.length || paths.length > 20) throw Error('Elegí hasta 10 videos.');
@@ -104,6 +104,7 @@ class VideoService{
  forget(ids){if(this.busy)throw Error('Esperá a que termine la limpieza.');for(const id of ids)this.files.delete(id);}
  async clean(ids,name,onProgress,config){if(this.busy)throw Error('Ya se están procesando videos.');if(!Array.isArray(ids)||!ids.length||ids.length>10||new Set(ids).size!==ids.length||ids.some(id=>!this.files.has(id)))throw Error('Volvé a seleccionar los videos.');this.sequence??=createSequence(readLastClip(this.sequenceFile));const moments=config?makeMoments(config,ids.length):null;const entries=ids.map(id=>this.files.get(id));if(entries.reduce((sum,e)=>sum+e.size,0)>3*1024*1024*1024)throw Error('La tanda supera los 3 GiB. Dividila en dos ZIP.');this.busy=true;let stage;try{await fs.promises.mkdir(this.downloads,{recursive:true});stage=await fs.promises.mkdtemp(path.join(this.downloads,'.photobatch-videos-'));const cleaned=[];for(let i=0;i<ids.length;i++){const entry=entries[i];onProgress?.({current:i,total:ids.length,name:path.basename(entry.file)});try{const stat=await fs.promises.stat(entry.file);if(stat.size!==entry.size||stat.mtimeMs!==entry.mtimeMs)throw Error('El original cambió desde que lo cargaste.');const target=path.join(stage,`${i+1}.`+path.extname(entry.file).slice(1).toLowerCase());const result=await this.cleanOne(entry.file,target,moments?.[i]);cleaned.push({...result,path:target,originalName:path.basename(entry.file),name:outputName(this.sequence[i],entry.file),...moments?.[i]});}catch(e){throw Error(`${path.basename(entry.file)}: ${e.message}`);}}onProgress?.({current:ids.length,total:ids.length,name:'Creando ZIP'});const target=await uniqueZip(this.downloads,name,config?.date),temporary=path.join(stage,'archive.zip');await archive(cleaned,temporary);const stat=await fs.promises.stat(temporary);if(stat.size<100)throw Error('El ZIP quedó incompleto.');// Reserve only the numbers in the finished ZIP, before making it visible.
  const last=this.sequence[ids.length-1];
+ if(this.reserveNumbers)await this.reserveNumbers('video',this.sequence[0],last,crypto.randomUUID());
  try{saveLastClip(this.sequenceFile,last);}catch(e){this.sequence=null;throw e;}
  this.sequence=createSequence(last);
  await fs.promises.link(temporary,target);return {zipName:path.basename(target),items:cleaned.map(({name,originalName,removed,size,date,time,offset})=>({name,originalName,removed,size,date,time,offset})),bytes:stat.size,sequence:this.sequence};}finally{this.busy=false;if(stage)await fs.promises.rm(stage,{recursive:true,force:true}).catch(()=>{});}}
@@ -118,4 +119,4 @@ function verifyVideoDates(meta,moment){
  for(const [key,value] of Object.entries(meta))if(/:(Track|Media)(Create|Modify)Date$/.test(key)&&value!==utc)throw Error('La fecha de una pista del video no coincide.');
  if(meta['Keys:CreationDate']!==local)throw Error('No se pudo verificar la zona horaria del video.');
 }
-module.exports={VideoService,residual,zipName,outputName,createSequence,archive};
+module.exports={VideoService,residual,zipName,outputName,createSequence,archive,readLastClip};
